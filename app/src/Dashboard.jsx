@@ -5,7 +5,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 // ============================================================
 
 const STORAGE_KEY = "btc_flow_saved_trades";
-const SAVE_THRESHOLD_USD = 100_000;
+const SAVE_THRESHOLD_USD = 500_000;
 const SAVE_THRESHOLD_BTC = 50; // whale-level
 
 function loadSavedTrades() {
@@ -743,6 +743,7 @@ function MarketInterpretation({ trades, btcPrice, putVol, callVol }) {
 function SavedTradesPanel({ btcPrice }) {
   const [savedTrades, setSavedTrades] = useState(() => loadSavedTrades());
   const [expanded, setExpanded] = useState(false);
+  const [sortMode, setSortMode] = useState("weighted"); // "weighted" | "size" | "recent"
 
   // Refresh from localStorage periodically
   useEffect(() => {
@@ -762,12 +763,31 @@ function SavedTradesPanel({ btcPrice }) {
   const massiveCount = savedTrades.filter((t) => (t.notionalUsd || 0) >= MASSIVE_THRESHOLD_USD).length;
   const totalNotional = savedTrades.reduce((sum, t) => sum + (t.notionalUsd || 0), 0);
 
-  // Sort: massive ($10M+) first, then major ($1M+), then by timestamp descending
+  // Sort based on selected mode
   const sortedTrades = [...savedTrades].sort((a, b) => {
-    const aTier = (a.notionalUsd || 0) >= MASSIVE_THRESHOLD_USD ? 2 : (a.notionalUsd || 0) >= MAJOR_THRESHOLD_USD ? 1 : 0;
-    const bTier = (b.notionalUsd || 0) >= MASSIVE_THRESHOLD_USD ? 2 : (b.notionalUsd || 0) >= MAJOR_THRESHOLD_USD ? 1 : 0;
-    if (aTier !== bTier) return bTier - aTier;
-    return (b.timestamp || 0) - (a.timestamp || 0);
+    const aN = a.notionalUsd || 0;
+    const bN = b.notionalUsd || 0;
+    const aT = a.timestamp || 0;
+    const bT = b.timestamp || 0;
+
+    if (sortMode === "size") {
+      return bN - aN || bT - aT;
+    }
+    if (sortMode === "recent") {
+      return bT - aT;
+    }
+    // Weighted: log(notional) * recency factor
+    // Recency decays with a half-life of ~6 hours so today's trades rank high
+    // but a $13M trade from yesterday still beats a $500K trade from 5 min ago
+    const now = Date.now();
+    const halfLife = 6 * 3600 * 1000; // 6 hours in ms
+    const aAge = Math.max(0, now - aT);
+    const bAge = Math.max(0, now - bT);
+    const aRecency = Math.pow(0.5, aAge / halfLife);
+    const bRecency = Math.pow(0.5, bAge / halfLife);
+    const aScore = Math.log10(Math.max(aN, 1)) * (0.3 + 0.7 * aRecency);
+    const bScore = Math.log10(Math.max(bN, 1)) * (0.3 + 0.7 * bRecency);
+    return bScore - aScore;
   });
 
   return (
@@ -828,6 +848,27 @@ function SavedTradesPanel({ btcPrice }) {
           </span>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          {expanded && (
+            <div style={{ display: "flex", gap: 2 }}>
+              {["weighted", "size", "recent"].map((mode) => (
+                <button
+                  key={mode}
+                  onClick={(e) => { e.stopPropagation(); setSortMode(mode); }}
+                  style={{
+                    background: sortMode === mode ? C.accent + "22" : "none",
+                    border: `1px solid ${sortMode === mode ? C.accent : C.border}`,
+                    color: sortMode === mode ? C.accent : C.textMuted,
+                    padding: "2px 8px", borderRadius: 3, cursor: "pointer",
+                    fontFamily: "'JetBrains Mono', monospace", fontSize: 9,
+                    textTransform: "uppercase", letterSpacing: 0.5,
+                    transition: "all 0.15s",
+                  }}
+                >
+                  {mode === "weighted" ? "⚖ WEIGHTED" : mode === "size" ? "💰 SIZE" : "🕐 RECENT"}
+                </button>
+              ))}
+            </div>
+          )}
           {expanded && savedTrades.length > 0 && (
             <button
               onClick={(e) => { e.stopPropagation(); handleClear(); }}
@@ -863,7 +904,7 @@ function SavedTradesPanel({ btcPrice }) {
           <div style={{ maxHeight: 400, overflowY: "auto" }}>
             {savedTrades.length === 0 ? (
               <div style={{ padding: 40, textAlign: "center", color: C.textMuted, fontFamily: "'JetBrains Mono', monospace", fontSize: 12 }}>
-                No trades saved yet. Trades over $100K notional or ≥50 BTC are auto-saved.
+                No trades saved yet. Trades over $500K notional or ≥50 BTC are auto-saved.
               </div>
             ) : (
               sortedTrades.map((t, i) => {
@@ -897,7 +938,8 @@ function SavedTradesPanel({ btcPrice }) {
                   tagColor = C.purple;
                   tagBg = C.purpleDim;
                 } else {
-                  tagLabel = ">100K";
+                  // Dynamic tag based on actual notional
+                  tagLabel = notional >= 500_000 ? ">500K" : notional >= 100_000 ? ">100K" : "SAVED";
                   tagColor = C.accent;
                   tagBg = C.accent + "22";
                 }
