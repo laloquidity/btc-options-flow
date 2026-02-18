@@ -796,14 +796,13 @@ function SavedTradesPanel({ btcPrice }) {
       return bT - aT;
     }
     // Weighted: log(notional) * recency factor
-    // Recency decays with a half-life of ~6 hours so today's trades rank high
-    // but a $13M trade from yesterday still beats a $500K trade from 5 min ago
+    // $10M+ MASSIVE trades get a 48hr half-life to stay pinned at the top
+    // Normal trades get a 6hr half-life so fresh flow stays relevant
     const now = Date.now();
-    const halfLife = 6 * 3600 * 1000; // 6 hours in ms
-    const aAge = Math.max(0, now - aT);
-    const bAge = Math.max(0, now - bT);
-    const aRecency = Math.pow(0.5, aAge / halfLife);
-    const bRecency = Math.pow(0.5, bAge / halfLife);
+    const aHalfLife = aN >= MASSIVE_THRESHOLD_USD ? 48 * 3600 * 1000 : 6 * 3600 * 1000;
+    const bHalfLife = bN >= MASSIVE_THRESHOLD_USD ? 48 * 3600 * 1000 : 6 * 3600 * 1000;
+    const aRecency = Math.pow(0.5, Math.max(0, now - aT) / aHalfLife);
+    const bRecency = Math.pow(0.5, Math.max(0, now - bT) / bHalfLife);
     const aScore = Math.log10(Math.max(aN, 1)) * (0.3 + 0.7 * aRecency);
     const bScore = Math.log10(Math.max(bN, 1)) * (0.3 + 0.7 * bRecency);
     return bScore - aScore;
