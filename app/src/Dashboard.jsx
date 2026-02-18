@@ -137,32 +137,131 @@ function parseInstrument(name) {
   };
 }
 
-function interpretTrade(type, strike, direction, amount, btcPrice) {
-  if (!btcPrice) return "No price data";
-  const otmPct = Math.abs(strike - btcPrice) / btcPrice * 100;
+function parseDTE(expiryStr) {
+  if (!expiryStr) return null;
+  const months = { JAN: 0, FEB: 1, MAR: 2, APR: 3, MAY: 4, JUN: 5, JUL: 6, AUG: 7, SEP: 8, OCT: 9, NOV: 10, DEC: 11 };
+  const day = parseInt(expiryStr.slice(0, 2));
+  const mon = months[expiryStr.slice(2, 5)];
+  const yr = 2000 + parseInt(expiryStr.slice(5));
+  if (isNaN(day) || mon === undefined || isNaN(yr)) return null;
+  const exp = new Date(yr, mon, day, 8, 0); // Deribit settles 08:00 UTC
+  const now = new Date();
+  return Math.max(0, Math.round((exp - now) / 86400000));
+}
 
-  if (type === "P") {
-    if (direction === "buy") {
-      if (strike < btcPrice && otmPct < 10)
-        return `Near-money put buy — hedging a long. Floor at $${strike.toLocaleString()}.`;
-      if (strike < btcPrice)
-        return `Deep OTM put buy — tail risk protection or bearish bet below $${strike.toLocaleString()}.`;
-      return `ITM/ATM put buy — aggressive bearish or delta-neutral hedge.`;
+function interpretTrade(type, strike, direction, amount, btcPrice, expiry) {
+  if (!btcPrice) return "No price data";
+
+  const isPut = type === "P";
+  const isBuy = direction === "buy";
+  const dist = (strike - btcPrice) / btcPrice * 100; // positive = above spot
+  const absDist = Math.abs(dist);
+  const dte = parseDTE(expiry);
+  const sk = `$${strike.toLocaleString()}`;
+
+  // ── Moneyness zones ──
+  let moneyness;
+  if (isPut) {
+    if (dist > 5) moneyness = "deep_itm";
+    else if (dist > 1) moneyness = "itm";
+    else if (dist >= -3) moneyness = "atm";
+    else if (dist >= -10) moneyness = "otm";
+    else if (dist >= -20) moneyness = "far_otm";
+    else moneyness = "deep_otm";
+  } else {
+    if (dist < -5) moneyness = "deep_itm";
+    else if (dist < -1) moneyness = "itm";
+    else if (dist <= 3) moneyness = "atm";
+    else if (dist <= 10) moneyness = "otm";
+    else if (dist <= 20) moneyness = "far_otm";
+    else moneyness = "deep_otm";
+  }
+
+  // ── DTE context ──
+  let dteTag = "";
+  let dteContext = "";
+  if (dte !== null) {
+    if (dte <= 2) { dteTag = "expiring"; dteContext = "expires within hours — pure gamma play"; }
+    else if (dte <= 7) { dteTag = "weekly"; dteContext = `${dte}d out — short-term tactical`; }
+    else if (dte <= 30) { dteTag = "near"; dteContext = `${dte}d out`; }
+    else if (dte <= 90) { dteTag = "medium"; dteContext = `${dte}d out — strategic timeframe`; }
+    else { dteTag = "leaps"; dteContext = `${dte}d out — long-dated structural view`; }
+  }
+
+  // ── Size qualifier ──
+  let sizeQ = "";
+  if (amount >= 200) sizeQ = "Market-moving size";
+  else if (amount >= 50) sizeQ = "Institutional block";
+  else if (amount >= 25) sizeQ = "Large positioning";
+  else if (amount >= 5) sizeQ = "Meaningful size";
+
+  // ── Build interpretation ──
+  let main = "";
+
+  if (isPut && isBuy) {
+    // PUT BUY
+    if (moneyness === "deep_otm" || moneyness === "far_otm") {
+      if (dteTag === "expiring" || dteTag === "weekly") {
+        main = `Deep OTM put buy at ${sk} (${absDist.toFixed(0)}% below spot), ${dteContext}. Binary bet on a crash — this only pays if BTC falls hard and fast. Low probability, asymmetric payoff.`;
+      } else if (dteTag === "leaps") {
+        main = `Far OTM put at ${sk}, ${dteContext}. Tail-risk insurance — someone is paying premium to protect against a major drawdown below ${sk} over the coming months. Likely hedging a large spot or perps position.`;
+      } else {
+        main = `OTM put buy at ${sk} (${absDist.toFixed(0)}% below spot). Downside protection targeting a floor at ${sk}. ${amount >= 25 ? "At this size, likely a portfolio hedge rather than a directional bet." : "Could be hedging or speculating on a downside move."}`;
+      }
+    } else if (moneyness === "otm") {
+      main = `Put buy ${absDist.toFixed(0)}% below spot at ${sk}. Classic hedge — establishing a downside floor. ${amount >= 50 ? "Institutional-sized protection; someone with real exposure is buying insurance here." : `Targeting protection at ${sk} if spot breaks current support.`}`;
+    } else if (moneyness === "atm") {
+      main = `ATM put buy at ${sk} — high-conviction downside play. Paying full premium for near-the-money protection. ${amount >= 25 ? "This size at-the-money is expensive; signals urgency or strong directional view." : "Expects a move lower from current levels."}`;
+    } else {
+      main = `ITM put buy at ${sk} — paying intrinsic value for delta exposure. ${moneyness === "deep_itm" ? "Acting as a synthetic short with limited downside risk. Sophisticated directional positioning." : "Aggressive bearish stance — wants immediate negative delta."}`;
     }
-    if (strike < btcPrice)
-      return `Put sell at $${strike.toLocaleString()} — bullish. Collecting premium, expects price holds above.`;
-    return `ITM put sell — closing protection or bullish stance.`;
+  } else if (isPut && !isBuy) {
+    // PUT SELL
+    if (moneyness === "deep_otm" || moneyness === "far_otm") {
+      main = `Selling far OTM puts at ${sk} (${absDist.toFixed(0)}% below spot). Collecting premium on a crash-level strike — willing to buy BTC at ${sk} if assigned. ${amount >= 25 ? "At this size, a confident structural bull or systematic premium seller." : "Bullish lean — betting this level won't be reached."}`;
+    } else if (moneyness === "otm") {
+      main = `Put sell at ${sk}, ${absDist.toFixed(0)}% below spot. Premium harvesting — getting paid to agree to buy BTC at ${sk}. ${dteTag === "weekly" || dteTag === "expiring" ? "Near expiry makes rapid theta decay favorable for the seller." : `Bullish-neutral view: profits as long as BTC stays above ${sk}.`}`;
+    } else if (moneyness === "atm") {
+      main = `Selling ATM puts at ${sk} — maximum premium collection near the money. This is a vol-selling strategy, bullish-neutral view. ${amount >= 50 ? "Institutional vol sale — likely running a systematic short-vol book or cash-secured put strategy." : "Expects BTC to hold current levels or move higher."}`;
+    } else {
+      main = `Selling ITM puts at ${sk}. ${moneyness === "deep_itm" ? "Likely closing an existing long put rather than initiating — closing out previous protection." : "Could be unwinding a hedge (closing a put position) or expressing a strong bullish view at this level."}`;
+    }
+  } else if (!isPut && isBuy) {
+    // CALL BUY
+    if (moneyness === "deep_otm" || moneyness === "far_otm") {
+      if (dteTag === "expiring" || dteTag === "weekly") {
+        main = `Deep OTM call at ${sk} (${absDist.toFixed(0)}% above spot), ${dteContext}. Cheap gamma lottery — needs an explosive upside move to pay off. Very low cost, very low probability.`;
+      } else if (dteTag === "leaps") {
+        main = `Far OTM call at ${sk}, ${dteContext}. Long-term bullish thesis — betting BTC reaches ${sk} over the coming months. Cheap entry for a structural upside view.`;
+      } else {
+        main = `OTM call buy ${absDist.toFixed(0)}% above spot at ${sk}. Speculating on a leg higher. ${amount >= 25 ? "Size here suggests conviction in a specific upside catalyst or breakout level." : "Asymmetric upside bet — limited downside to premium paid."}`;
+      }
+    } else if (moneyness === "otm") {
+      main = `Call buy at ${sk}, ${absDist.toFixed(0)}% above spot. Bullish positioning targeting a move to ${sk}+. ${dteTag === "medium" || dteTag === "leaps" ? "Longer timeframe gives this trade room to work — not a short-term punt." : "Near-term directional bet on upside."}`;
+    } else if (moneyness === "atm") {
+      main = `ATM call buy at ${sk} — maximum gamma, high-conviction bullish. Paying top premium for immediate upside exposure. ${amount >= 50 ? "Institutional call buyer near the money — this is a strong directional signal." : "Expects an imminent move higher from current levels."}`;
+    } else {
+      main = `ITM call buy at ${sk} — paying intrinsic value for leveraged long exposure. ${moneyness === "deep_itm" ? "Deep ITM acts like a synthetic long with limited loss. Delta-one substitute." : "Aggressive long entry — wants immediate positive delta with less time-decay risk than ATM."}`;
+    }
+  } else {
+    // CALL SELL
+    if (moneyness === "deep_otm" || moneyness === "far_otm") {
+      main = `Selling far OTM calls at ${sk} (${absDist.toFixed(0)}% above spot). Earning premium on an upside level unlikely to be hit. ${amount >= 25 ? "Systematic income strategy — likely a covered call against a spot position." : `Betting BTC stays below ${sk} through expiry.`}`;
+    } else if (moneyness === "otm") {
+      main = `Call sell at ${sk}, ${absDist.toFixed(0)}% above spot. Capping upside — either a covered call against a long position or a bearish lean. ${amount >= 50 ? "At this size, most likely covered — writing calls against a BTC holding to generate income." : `Collecting premium, expects BTC stays below ${sk}.`}`;
+    } else if (moneyness === "atm") {
+      main = `Selling ATM calls at ${sk} — bearish or vol-selling play. Maximum premium near the money, but high risk if spot rallies. ${amount >= 25 ? "Likely part of a structured position (straddle, strangle, or covered call)." : "Directionally neutral-to-bearish at current levels."}`;
+    } else {
+      main = `Selling ITM calls at ${sk}. ${moneyness === "deep_itm" ? "Likely closing an existing long call position — taking profit on a previous bullish trade." : `Either closing a position or expressing strong conviction that BTC won't stay above ${sk}.`}`;
+    }
   }
-  if (direction === "buy") {
-    if (strike > btcPrice && otmPct < 10)
-      return `Near-money call buy — bullish. Targeting move above $${strike.toLocaleString()}.`;
-    if (strike > btcPrice)
-      return `Deep OTM call buy — lottery ticket or short hedge above $${strike.toLocaleString()}.`;
-    return `ITM/ATM call buy — strong bullish conviction.`;
+
+  // Append size qualifier if significant
+  if (sizeQ && amount >= 25) {
+    main += ` ${sizeQ} (${amount.toFixed(0)} BTC).`;
   }
-  if (strike > btcPrice)
-    return `Call sell at $${strike.toLocaleString()} — capping upside. Covered call or bearish lean.`;
-  return `ITM call sell — closing bullish position or taking profit.`;
+
+  return main;
 }
 
 // ============================================================
@@ -261,7 +360,7 @@ function TradeRow({ trade, btcPrice, index }) {
   const isPut = parsed.type === "P";
   const isBuy = trade.direction === "buy";
   const amount = trade.amount;
-  const interp = interpretTrade(parsed.type, parsed.strike, trade.direction, amount, btcPrice);
+  const interp = interpretTrade(parsed.type, parsed.strike, trade.direction, amount, btcPrice, parsed.expiry);
 
   let sizeLabel = "";
   let sizeBg = "transparent";
@@ -512,12 +611,38 @@ function MarketInterpretation({ trades, btcPrice, putVol, callVol }) {
   const topPutStrike = Object.entries(putStrikes).sort((a, b) => b[1] - a[1])[0];
   if (topPutStrike && topPutStrike[1] > 20 && btcPrice > 0) {
     const strike = parseFloat(topPutStrike[0]);
-    const dist = ((strike - btcPrice) / btcPrice * 100).toFixed(1);
-    insights.push({
-      type: "info",
-      title: `Concentrated Puts at $${strike.toLocaleString()}`,
-      text: `${topPutStrike[1].toFixed(1)} BTC in puts at the $${strike.toLocaleString()} strike (${dist}% from spot). This level is being used as a hedging floor or downside target by large players. Cross-reference with your liquidation heatmap — if this aligns with a liquidity cluster, conviction increases.`,
-    });
+    const distPct = ((strike - btcPrice) / btcPrice * 100);
+    const distLabel = `${Math.abs(distPct).toFixed(1)}% ${distPct >= 0 ? "above" : "below"} spot`;
+    const isITM = strike >= btcPrice; // Put is ITM when strike >= spot
+    const vol = topPutStrike[1].toFixed(1);
+
+    let putInsight;
+    if (isITM && distPct > 5) {
+      putInsight = {
+        type: "bearish",
+        title: `Concentrated ITM Puts at $${strike.toLocaleString()}`,
+        text: `${vol} BTC in deep ITM puts at $${strike.toLocaleString()} (${distLabel}). These puts already have significant intrinsic value. Heavy ITM put volume signals active bearish positioning or institutions locking in downside gains. Smart money may be expecting continued weakness below current levels.`,
+      };
+    } else if (isITM) {
+      putInsight = {
+        type: "warning",
+        title: `Concentrated Puts Near/Above Spot at $${strike.toLocaleString()}`,
+        text: `${vol} BTC in puts at $${strike.toLocaleString()} (${distLabel}). These are at-the-money or slightly ITM — maximum gamma and premium. This is aggressive downside positioning, not a distant hedge. Traders here are actively betting on or protecting against a move lower from current levels.`,
+      };
+    } else if (Math.abs(distPct) < 10) {
+      putInsight = {
+        type: "info",
+        title: `Concentrated Puts at $${strike.toLocaleString()}`,
+        text: `${vol} BTC in puts at $${strike.toLocaleString()} (${distLabel}). This is a key hedging floor — large players are establishing downside protection here. If spot approaches this level, expect put delta hedging to accelerate selling pressure. Cross-reference with your liquidation heatmap.`,
+      };
+    } else {
+      putInsight = {
+        type: "info",
+        title: `Far OTM Puts Concentrated at $${strike.toLocaleString()}`,
+        text: `${vol} BTC in puts at $${strike.toLocaleString()} (${distLabel}). Tail-risk insurance at a distant strike — large players are protecting against a black-swan crash scenario. Low probability of hitting, but the volume suggests real concern about extreme downside risk.`,
+      };
+    }
+    insights.push(putInsight);
   }
 
   // Whale activity
@@ -539,8 +664,9 @@ function MarketInterpretation({ trades, btcPrice, putVol, callVol }) {
     const nearMoneyPutBuys = trades.filter((t) => {
       const p = parseInstrument(t.instrument_name);
       if (!p || p.type !== "P" || t.direction !== "buy") return false;
-      const dist = Math.abs(p.strike - btcPrice) / btcPrice;
-      return dist < 0.05 && t.amount >= 5;
+      const strikeDistPct = (p.strike - btcPrice) / btcPrice;
+      // Only count puts at or below spot (OTM/ATM puts) — ITM put buys are a different signal
+      return strikeDistPct <= 0.02 && Math.abs(strikeDistPct) < 0.05 && t.amount >= 5;
     });
 
     const totalNearPutVol = nearMoneyPutBuys.reduce((sum, t) => sum + t.amount, 0);
@@ -548,7 +674,7 @@ function MarketInterpretation({ trades, btcPrice, putVol, callVol }) {
       insights.push({
         type: "warning",
         title: "Active Hedging Near Spot",
-        text: `${totalNearPutVol.toFixed(1)} BTC in near-the-money put buying (within 5% of spot). This is the hedging signal you asked about — someone with significant long exposure is buying protection at current levels. Corroborate with footprint: if NL is declining while this is happening, smart money is actively de-risking.`,
+        text: `${totalNearPutVol.toFixed(1)} BTC in near-the-money put buying (within 5% of spot, at or below current price). Large players are buying downside protection at current levels — this is classic institutional hedging. Expect increased implied vol at these strikes and potential delta-hedge selling if spot dips further.`,
       });
     }
   }
@@ -747,7 +873,7 @@ function SavedTradesPanel({ btcPrice }) {
                 const isBuy = t.direction === "buy";
                 const spotAtTime = t.btcPriceAtSave || btcPrice;
                 const distPct = spotAtTime > 0 ? ((parsed.strike - spotAtTime) / spotAtTime * 100).toFixed(1) : "—";
-                const interp = interpretTrade(parsed.type, parsed.strike, t.direction, t.amount, spotAtTime);
+                const interp = interpretTrade(parsed.type, parsed.strike, t.direction, t.amount, spotAtTime, parsed.expiry);
                 const notional = t.notionalUsd || t.amount * spotAtTime;
                 const isMassive = notional >= MASSIVE_THRESHOLD_USD;
                 const isMajor = notional >= MAJOR_THRESHOLD_USD && notional < MASSIVE_THRESHOLD_USD;
