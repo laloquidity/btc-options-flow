@@ -2,7 +2,7 @@
 
 A real-time BTC options flow dashboard that pulls directly from Deribit's public API. No paid data feeds. No API keys. Just raw institutional flow — parsed, interpreted, and tracked live.
 
-![Dashboard Hero](docs/screenshots/dashboard_hero.png)
+![Dashboard Hero](docs/screenshots/dashboard_hero.jpg)
 
 ## Features
 
@@ -14,35 +14,46 @@ A real-time BTC options flow dashboard that pulls directly from Deribit's public
 
 ### 🧠 Market Interpretation Engine
 Auto-generates actionable insights from the options flow:
-- Concentrated strike detection (hedging floors / downside targets)
-- Active hedging signals (near-the-money put buying)
-- Cross-reference prompts with liquidation heatmaps
+- **Concentrated strike detection** — distinguishes ITM puts (bearish positioning) from OTM hedging floors
+- **Active hedging signals** — near-the-money put buying filtered to only count OTM/ATM puts
+- **Whale activity detection** — flags unusual institutional-size flow
+- **Collapsible UI** — shows top 2 insights by default with a "Show more" toggle
+
+### 🎯 Institutional-Grade Trade Interpretations
+Every trade gets a multi-clause, plain-English interpretation — the kind of read you'd hear on an institutional desk:
+
+- **6 moneyness zones** — Deep ITM → Deep OTM, each with tailored commentary
+- **5 DTE buckets** — Expiring (gamma lottery), weekly, near-term, medium (strategic), LEAPS (structural)
+- **4 size tiers** — Meaningful (5+ BTC), large (25+), institutional (50+), market-moving (200+)
+- **Context-aware reads** — e.g. "ATM put buy at $66,000 — high-conviction downside play. Paying full premium for near-the-money protection."
 
 ### 🔥 Strike Heatmaps & Expiry Breakdown
 - **Top put/call strikes by volume** — see where the money is clustering
 - **Volume by expiry** — understand the term structure of positioning
 
 ### 🐋 Persistent Whale Trade Tracker
-Automatically saves and categorizes significant trades with tiered tagging:
+Automatically saves and categorizes significant trades ($500K+ notional or ≥50 BTC):
 
 | Tier | Threshold | Tag | Color |
 |------|-----------|-----|-------|
 | 🔱 MASSIVE | $10M+ notional | `🔱 MASSIVE` | Gold |
 | ⚡ MAJOR | $1M+ notional | `⚡ MAJOR` | Orange |
 | 🐋 WHALE | ≥50 BTC | `WHALE` | Purple |
-| 📊 Notable | $100K+ notional | `>100K` | Blue |
+| 📊 Notable | $500K+ notional | `>500K` | Blue |
 
-- **Pinned sorting** — MASSIVE and MAJOR trades always at the top
-- **Persistent storage** — trades survive page refreshes (localStorage)
-- **Deduplication** — no duplicate entries, capped at 500 trades
-- **Auto-interpretation** — every saved trade gets a plain-English read
+#### Smart Sorting
+Three sort modes with one-click toggles:
+
+- **⚖ WEIGHTED** (default) — composite score using `log(notional) × recency_decay`. MASSIVE trades ($10M+) get a 48-hour half-life to stay pinned at the top; normal trades use a 6-hour half-life.
+- **💰 SIZE** — pure notional value, largest first
+- **🕐 RECENT** — chronological, newest first
 
 ![Whale Trades Panel](docs/screenshots/whale_panel.png)
 
 ### 📡 Live Trade Feed
 - All recent options trades in real-time
 - Filter by: All, Puts, Calls, Large
-- Tagged by size (Notable, Large, Whale)
+- Every trade gets a contextual interpretation with moneyness, DTE, and size awareness
 
 ## Tech Stack
 
