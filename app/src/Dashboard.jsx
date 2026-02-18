@@ -703,13 +703,17 @@ function MarketInterpretation({ trades, btcPrice, putVol, callVol }) {
     neutral: "⚪",
   };
 
+  const [showAll, setShowAll] = useState(false);
+  const visibleInsights = showAll ? insights : insights.slice(0, 2);
+  const hasMore = insights.length > 2;
+
   return (
     <div style={{ background: C.bgCard, border: `1px solid ${C.border}`, borderRadius: 8, padding: 20 }}>
       <div style={{ fontSize: 11, color: C.textDim, textTransform: "uppercase", letterSpacing: 1.2, marginBottom: 16, fontFamily: "'JetBrains Mono', monospace" }}>
         🧠 Market Interpretation
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-        {insights.map((ins, i) => (
+        {visibleInsights.map((ins, i) => (
           <div key={i} style={{
             padding: "14px 16px",
             borderRadius: 6,
@@ -735,6 +739,21 @@ function MarketInterpretation({ trades, btcPrice, putVol, callVol }) {
             </div>
           </div>
         ))}
+        {hasMore && (
+          <button
+            onClick={() => setShowAll(!showAll)}
+            style={{
+              background: "none", border: `1px solid ${C.border}`, color: C.accent,
+              padding: "6px 14px", borderRadius: 4, cursor: "pointer",
+              fontFamily: "'JetBrains Mono', monospace", fontSize: 11,
+              alignSelf: "center", transition: "all 0.15s",
+            }}
+            onMouseEnter={(e) => { e.currentTarget.style.borderColor = C.accent; e.currentTarget.style.background = C.accent + "11"; }}
+            onMouseLeave={(e) => { e.currentTarget.style.borderColor = C.border; e.currentTarget.style.background = "none"; }}
+          >
+            {showAll ? "Show less" : `Show ${insights.length - 2} more`}
+          </button>
+        )}
       </div>
     </div>
   );
