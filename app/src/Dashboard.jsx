@@ -795,17 +795,25 @@ function SavedTradesPanel({ btcPrice }) {
     if (sortMode === "recent") {
       return bT - aT;
     }
-    // Weighted: log(notional) * recency factor
-    // $10M+ MASSIVE trades get a 48hr half-life to stay pinned at the top
-    // Normal trades get a 6hr half-life so fresh flow stays relevant
-    const now = Date.now();
-    const aHalfLife = aN >= MASSIVE_THRESHOLD_USD ? 48 * 3600 * 1000 : 6 * 3600 * 1000;
-    const bHalfLife = bN >= MASSIVE_THRESHOLD_USD ? 48 * 3600 * 1000 : 6 * 3600 * 1000;
-    const aRecency = Math.pow(0.5, Math.max(0, now - aT) / aHalfLife);
-    const bRecency = Math.pow(0.5, Math.max(0, now - bT) / bHalfLife);
-    const aScore = Math.log10(Math.max(aN, 1)) * (0.3 + 0.7 * aRecency);
-    const bScore = Math.log10(Math.max(bN, 1)) * (0.3 + 0.7 * bRecency);
-    return bScore - aScore;
+    // Weighted: tier-first, then recency within tier
+    // MASSIVE ($10M+) always on top with 48hr sticky, then MAJOR, then rest
+    // Within the same tier, most recent trade wins
+    const aTier = aN >= MASSIVE_THRESHOLD_USD ? 3 : aN >= MAJOR_THRESHOLD_USD ? 2 : aN >= 500_000 ? 1 : 0;
+    const bTier = bN >= MASSIVE_THRESHOLD_USD ? 3 : bN >= MAJOR_THRESHOLD_USD ? 2 : bN >= 500_000 ? 1 : 0;
+    if (aTier !== bTier) {
+      // MASSIVE trades get 48hr before they drop tier — still sort above even if old
+      if (aTier === 3 || bTier === 3) {
+        const now = Date.now();
+        const massiveSticky = 48 * 3600 * 1000;
+        const aEffective = aTier === 3 && (now - aT) < massiveSticky ? 3 : aTier === 3 ? 2 : aTier;
+        const bEffective = bTier === 3 && (now - bT) < massiveSticky ? 3 : bTier === 3 ? 2 : bTier;
+        if (aEffective !== bEffective) return bEffective - aEffective;
+        return bT - aT; // same effective tier → most recent first
+      }
+      return bTier - aTier;
+    }
+    // Same tier: most recent first
+    return bT - aT;
   });
 
   return (
@@ -910,13 +918,13 @@ function SavedTradesPanel({ btcPrice }) {
         <>
           <div style={{
             display: "grid",
-            gridTemplateColumns: "130px 52px 50px 85px 65px 72px 90px 75px minmax(200px, 1fr)",
+            gridTemplateColumns: "130px 52px 50px 85px 65px 72px 72px 90px 75px minmax(200px, 1fr)",
             padding: "8px 16px", fontSize: 10, color: C.textMuted,
             textTransform: "uppercase", letterSpacing: 1,
             borderBottom: `1px solid ${C.border}`, gap: 8,
           }}>
             <span>Date</span><span>Type</span><span>Side</span><span>Strike</span>
-            <span>Dist</span><span>Size</span><span>Notional</span><span>Tag</span>
+            <span>Dist</span><span>Size</span><span>Expiry</span><span>Notional</span><span>Tag</span>
             <span>Interpretation</span>
           </div>
           <div style={{ maxHeight: 400, overflowY: "auto" }}>
@@ -965,10 +973,13 @@ function SavedTradesPanel({ btcPrice }) {
                 const highlightColor = isMassive ? C.gold : C.orange;
                 const highlightBorder = isMassive ? C.goldBorder : C.orangeBorder;
 
+                // Format expiry for display
+                const expiryStr = parsed.expiry || "—";
+
                 return (
                   <div key={t.trade_id || i} style={{
                     display: "grid",
-                    gridTemplateColumns: "130px 52px 50px 85px 65px 72px 90px 75px minmax(200px, 1fr)",
+                    gridTemplateColumns: "130px 52px 50px 85px 65px 72px 72px 90px 75px minmax(200px, 1fr)",
                     alignItems: "start", padding: "10px 16px", fontSize: 12,
                     fontFamily: "'JetBrains Mono', monospace",
                     background: isHighlighted
@@ -993,6 +1004,7 @@ function SavedTradesPanel({ btcPrice }) {
                       {distPct > 0 ? "+" : ""}{distPct}%
                     </span>
                     <span style={{ color: isHighlighted ? highlightColor : C.text, fontWeight: 600 }}>{t.amount.toFixed(1)}</span>
+                    <span style={{ color: C.textDim, fontSize: 10 }}>{expiryStr}</span>
                     <span style={{ color: isHighlighted ? highlightColor : C.yellow, fontWeight: 700, fontSize: isHighlighted ? 12 : 11 }}>
                       ${notional >= 1e6 ? (notional / 1e6).toFixed(2) + "M" : (notional / 1e3).toFixed(0) + "K"}
                     </span>
