@@ -927,134 +927,163 @@ function SavedTradesPanel({ btcPrice }) {
             <span>Dist</span><span>Size</span><span>Expiry</span><span>Notional</span><span>Tag</span>
             <span>Interpretation</span>
           </div>
-          <div style={{ maxHeight: 400, overflowY: "auto" }}>
-            {savedTrades.length === 0 ? (
-              <div style={{ padding: 40, textAlign: "center", color: C.textMuted, fontFamily: "'JetBrains Mono', monospace", fontSize: 12 }}>
-                No trades saved yet. Trades over $500K notional or ≥50 BTC are auto-saved.
-              </div>
-            ) : (
-              (() => {
-                // Pre-compute strike-level aggregation
-                const strikeAgg = {};
-                savedTrades.forEach(tr => {
-                  const p = parseInstrument(tr.instrument_name);
-                  if (!p) return;
-                  const key = `${p.strike}_${p.type}`;
-                  if (!strikeAgg[key]) strikeAgg[key] = { count: 0, totalNotional: 0, expiries: new Set(), tradeIds: new Set() };
-                  strikeAgg[key].count++;
-                  strikeAgg[key].totalNotional += (tr.notionalUsd || 0);
-                  if (p.expiry) strikeAgg[key].expiries.add(p.expiry);
-                  strikeAgg[key].tradeIds.add(tr.trade_id || tr.instrument_name + tr.timestamp);
-                });
-                return sortedTrades.map((t, i) => {
-                  const parsed = parseInstrument(t.instrument_name);
-                  if (!parsed) return null;
-                  const isPut = parsed.type === "P";
-                  const isBuy = t.direction === "buy";
-                  const spotAtTime = t.btcPriceAtSave || btcPrice;
-                  const distPct = spotAtTime > 0 ? ((parsed.strike - spotAtTime) / spotAtTime * 100).toFixed(1) : "—";
-                  const interp = interpretTrade(parsed.type, parsed.strike, t.direction, t.amount, spotAtTime, parsed.expiry);
+          <div style={{ position: "relative" }}>
+            <div style={{ maxHeight: 400, overflowY: "auto" }}>
+              {savedTrades.length === 0 ? (
+                <div style={{ padding: 40, textAlign: "center", color: C.textMuted, fontFamily: "'JetBrains Mono', monospace", fontSize: 12 }}>
+                  No trades saved yet. Trades over $500K notional or ≥50 BTC are auto-saved.
+                </div>
+              ) : (
+                (() => {
+                  // Pre-compute strike-level aggregation
+                  const strikeAgg = {};
+                  savedTrades.forEach(tr => {
+                    const p = parseInstrument(tr.instrument_name);
+                    if (!p) return;
+                    const key = `${p.strike}_${p.type}`;
+                    if (!strikeAgg[key]) strikeAgg[key] = { count: 0, totalNotional: 0, expiries: new Set(), tradeIds: new Set() };
+                    strikeAgg[key].count++;
+                    strikeAgg[key].totalNotional += (tr.notionalUsd || 0);
+                    if (p.expiry) strikeAgg[key].expiries.add(p.expiry);
+                    strikeAgg[key].tradeIds.add(tr.trade_id || tr.instrument_name + tr.timestamp);
+                  });
+                  return sortedTrades.map((t, i) => {
+                    const parsed = parseInstrument(t.instrument_name);
+                    if (!parsed) return null;
+                    const isPut = parsed.type === "P";
+                    const isBuy = t.direction === "buy";
+                    const spotAtTime = t.btcPriceAtSave || btcPrice;
+                    const distPct = spotAtTime > 0 ? ((parsed.strike - spotAtTime) / spotAtTime * 100).toFixed(1) : "—";
+                    const interp = interpretTrade(parsed.type, parsed.strike, t.direction, t.amount, spotAtTime, parsed.expiry);
 
-                  // Strike-level context
-                  const aggKey = `${parsed.strike}_${parsed.type}`;
-                  const agg = strikeAgg[aggKey];
-                  let strikeContext = "";
-                  if (agg && agg.count >= 2) {
-                    const totalStr = agg.totalNotional >= 1e6 ? `$${(agg.totalNotional / 1e6).toFixed(2)}M` : `$${(agg.totalNotional / 1e3).toFixed(0)}K`;
-                    const expiryCount = agg.expiries.size;
-                    const typeLabel = isPut ? "put" : "call";
-                    const sizing = agg.totalNotional >= 20e6 ? "massive institutional accumulation"
-                      : agg.totalNotional >= 10e6 ? "significant institutional positioning"
-                        : "notable strike concentration";
-                    strikeContext = ` 📊 Strike concentration: ${agg.count} ${typeLabel} trades totaling ${totalStr} at $${parsed.strike.toLocaleString()}${expiryCount > 1 ? ` across ${expiryCount} expiries` : ""} — ${sizing}.`;
-                  }
-                  const notional = t.notionalUsd || t.amount * spotAtTime;
-                  const isMassive = notional >= MASSIVE_THRESHOLD_USD;
-                  const isMajor = notional >= MAJOR_THRESHOLD_USD && notional < MASSIVE_THRESHOLD_USD;
-                  const isHighlighted = isMassive || isMajor;
-                  const isWhale = t.amount >= 50;
-                  const dateStr = new Date(t.timestamp).toLocaleDateString([], { month: "short", day: "numeric" });
-                  const timeStr = new Date(t.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+                    // Strike-level context
+                    const aggKey = `${parsed.strike}_${parsed.type}`;
+                    const agg = strikeAgg[aggKey];
+                    let strikeContext = "";
+                    let aggInterp = "";
+                    if (agg && agg.count >= 2) {
+                      const totalStr = agg.totalNotional >= 1e6 ? `$${(agg.totalNotional / 1e6).toFixed(2)}M` : `$${(agg.totalNotional / 1e3).toFixed(0)}K`;
+                      const expiryCount = agg.expiries.size;
+                      const typeLabel = isPut ? "put" : "call";
+                      const expiryNote = expiryCount > 1 ? ` across ${expiryCount} expiries` : "";
 
-                  // Tag tier
-                  let tagLabel, tagColor, tagBg;
-                  if (isMassive) {
-                    tagLabel = "🔱 MASSIVE";
-                    tagColor = C.gold;
-                    tagBg = C.goldDim;
-                  } else if (isMajor) {
-                    tagLabel = "⚡ MAJOR";
-                    tagColor = C.orange;
-                    tagBg = C.orangeDim;
-                  } else if (isWhale) {
-                    tagLabel = "WHALE";
-                    tagColor = C.purple;
-                    tagBg = C.purpleDim;
-                  } else {
-                    // Dynamic tag based on actual notional
-                    tagLabel = notional >= 500_000 ? ">500K" : notional >= 100_000 ? ">100K" : "SAVED";
-                    tagColor = C.accent;
-                    tagBg = C.accent + "22";
-                  }
+                      // Generate upgraded interpretation based on concentration level
+                      if (agg.totalNotional >= 20e6) {
+                        // $20M+ massive accumulation — reframe the entire read
+                        if (isPut && isBuy) {
+                          aggInterp = `Part of a concentrated ${totalStr} institutional put position at $${parsed.strike.toLocaleString()}${expiryNote} (${agg.count} trades). This level of accumulation signals a deliberate portfolio-level hedge — likely protecting a very large spot or basis position against a move below $${parsed.strike.toLocaleString()}.`;
+                        } else if (isPut && !isBuy) {
+                          aggInterp = `Selling into a ${totalStr} concentrated put position at $${parsed.strike.toLocaleString()}${expiryNote} (${agg.count} trades). At this scale, likely premium harvesting by a structured products desk or closing out a portion of a massive hedge.`;
+                        } else if (!isPut && isBuy) {
+                          aggInterp = `Part of a ${totalStr} concentrated call position at $${parsed.strike.toLocaleString()}${expiryNote} (${agg.count} trades). Aggressive institutional accumulation — building a significant upside position at this strike.`;
+                        } else {
+                          aggInterp = `Selling into a ${totalStr} concentrated call position at $${parsed.strike.toLocaleString()}${expiryNote} (${agg.count} trades). Likely covered call writing or structured income at scale.`;
+                        }
+                      } else if (agg.totalNotional >= 10e6) {
+                        // $10M+ significant positioning
+                        const actionNote = isPut ? (isBuy ? "institutional hedging interest" : "premium collection") : (isBuy ? "bullish conviction" : "overwriting/income");
+                        aggInterp = `${interp} Part of ${totalStr} in ${typeLabel} flow at this strike${expiryNote} (${agg.count} trades) — ${actionNote} is building at $${parsed.strike.toLocaleString()}.`;
+                      } else {
+                        // Under $10M — just add a footnote
+                        strikeContext = ` 📊 ${agg.count} ${typeLabel} trades totaling ${totalStr} at $${parsed.strike.toLocaleString()}${expiryNote}.`;
+                      }
+                    }
+                    const notional = t.notionalUsd || t.amount * spotAtTime;
+                    const isMassive = notional >= MASSIVE_THRESHOLD_USD;
+                    const isMajor = notional >= MAJOR_THRESHOLD_USD && notional < MASSIVE_THRESHOLD_USD;
+                    const isHighlighted = isMassive || isMajor;
+                    const isWhale = t.amount >= 50;
+                    const dateStr = new Date(t.timestamp).toLocaleDateString([], { month: "short", day: "numeric" });
+                    const timeStr = new Date(t.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 
-                  const highlightColor = isMassive ? C.gold : C.orange;
-                  const highlightBorder = isMassive ? C.goldBorder : C.orangeBorder;
+                    // Tag tier
+                    let tagLabel, tagColor, tagBg;
+                    if (isMassive) {
+                      tagLabel = "🔱 MASSIVE";
+                      tagColor = C.gold;
+                      tagBg = C.goldDim;
+                    } else if (isMajor) {
+                      tagLabel = "⚡ MAJOR";
+                      tagColor = C.orange;
+                      tagBg = C.orangeDim;
+                    } else if (isWhale) {
+                      tagLabel = "WHALE";
+                      tagColor = C.purple;
+                      tagBg = C.purpleDim;
+                    } else {
+                      // Dynamic tag based on actual notional
+                      tagLabel = notional >= 500_000 ? ">500K" : notional >= 100_000 ? ">100K" : "SAVED";
+                      tagColor = C.accent;
+                      tagBg = C.accent + "22";
+                    }
 
-                  // Format expiry for display
-                  const expiryStr = parsed.expiry || "—";
+                    const highlightColor = isMassive ? C.gold : C.orange;
+                    const highlightBorder = isMassive ? C.goldBorder : C.orangeBorder;
 
-                  return (
-                    <div key={t.trade_id || i} style={{
-                      display: "grid",
-                      gridTemplateColumns: "130px 52px 50px 85px 65px 72px 72px 90px 75px minmax(200px, 1fr)",
-                      alignItems: "start", padding: "10px 16px", fontSize: 12,
-                      fontFamily: "'JetBrains Mono', monospace",
-                      background: isHighlighted
-                        ? `linear-gradient(90deg, ${highlightColor}08, ${highlightColor}04, transparent)`
-                        : i % 2 === 0 ? "transparent" : C.bgCard + "60",
-                      borderBottom: `1px solid ${isHighlighted ? highlightBorder : C.border + "44"}`,
-                      borderLeft: isHighlighted ? `3px solid ${highlightColor}` : "3px solid transparent",
-                      gap: 8,
-                    }}>
-                      <span style={{ color: isHighlighted ? highlightColor : C.textDim, fontSize: 11, fontWeight: isHighlighted ? 600 : 400 }}>{dateStr} {timeStr}</span>
-                      <span style={{
-                        color: isPut ? C.red : C.green, fontWeight: 700,
-                        padding: "2px 6px", borderRadius: 3,
-                        background: isPut ? C.redDim : C.greenDim,
-                        textAlign: "center", fontSize: 11,
-                      }}>{isPut ? "PUT" : "CALL"}</span>
-                      <span style={{ color: isBuy ? C.green : C.red, fontSize: 11, textAlign: "center" }}>
-                        {isBuy ? "BUY" : "SELL"}
-                      </span>
-                      <span style={{ color: C.text, fontWeight: 600 }}>${parsed.strike.toLocaleString()}</span>
-                      <span style={{ color: parseFloat(distPct) > 0 ? C.green : parseFloat(distPct) < 0 ? C.red : C.textDim }}>
-                        {distPct > 0 ? "+" : ""}{distPct}%
-                      </span>
-                      <span style={{ color: isHighlighted ? highlightColor : C.text, fontWeight: 600 }}>{t.amount.toFixed(1)}</span>
-                      <span style={{ color: C.textDim, fontSize: 10 }}>{expiryStr}</span>
-                      <span style={{ color: isHighlighted ? highlightColor : C.yellow, fontWeight: 700, fontSize: isHighlighted ? 12 : 11 }}>
-                        ${notional >= 1e6 ? (notional / 1e6).toFixed(2) + "M" : (notional / 1e3).toFixed(0) + "K"}
-                      </span>
-                      <span style={{
-                        fontSize: 9, fontWeight: 700,
-                        color: tagColor,
-                        background: tagBg,
-                        padding: "2px 6px", borderRadius: 3, textAlign: "center",
-                        letterSpacing: 0.8,
-                        border: isHighlighted ? `1px solid ${highlightBorder}` : "none",
-                      }}>{tagLabel}</span>
-                      <span style={{ color: isHighlighted ? C.text : C.textDim, fontSize: 11, lineHeight: 1.5, fontWeight: isHighlighted ? 500 : 400 }}>
-                        {interp}
-                        {strikeContext && (
-                          <span style={{ display: "block", marginTop: 4, color: C.accent, fontSize: 10, fontWeight: 600 }}>
-                            {strikeContext}
-                          </span>
-                        )}
-                      </span>
-                    </div>
-                  );
-                });
-              })()
+                    // Format expiry for display
+                    const expiryStr = parsed.expiry || "—";
+
+                    return (
+                      <div key={t.trade_id || i} style={{
+                        display: "grid",
+                        gridTemplateColumns: "130px 52px 50px 85px 65px 72px 72px 90px 75px minmax(200px, 1fr)",
+                        alignItems: "start", padding: "10px 16px", fontSize: 12,
+                        fontFamily: "'JetBrains Mono', monospace",
+                        background: isHighlighted
+                          ? `linear-gradient(90deg, ${highlightColor}08, ${highlightColor}04, transparent)`
+                          : i % 2 === 0 ? "transparent" : C.bgCard + "60",
+                        borderBottom: `1px solid ${isHighlighted ? highlightBorder : C.border + "44"}`,
+                        borderLeft: isHighlighted ? `3px solid ${highlightColor}` : "3px solid transparent",
+                        gap: 8,
+                      }}>
+                        <span style={{ color: isHighlighted ? highlightColor : C.textDim, fontSize: 11, fontWeight: isHighlighted ? 600 : 400 }}>{dateStr} {timeStr}</span>
+                        <span style={{
+                          color: isPut ? C.red : C.green, fontWeight: 700,
+                          padding: "2px 6px", borderRadius: 3,
+                          background: isPut ? C.redDim : C.greenDim,
+                          textAlign: "center", fontSize: 11,
+                        }}>{isPut ? "PUT" : "CALL"}</span>
+                        <span style={{ color: isBuy ? C.green : C.red, fontSize: 11, textAlign: "center" }}>
+                          {isBuy ? "BUY" : "SELL"}
+                        </span>
+                        <span style={{ color: C.text, fontWeight: 600 }}>${parsed.strike.toLocaleString()}</span>
+                        <span style={{ color: parseFloat(distPct) > 0 ? C.green : parseFloat(distPct) < 0 ? C.red : C.textDim }}>
+                          {distPct > 0 ? "+" : ""}{distPct}%
+                        </span>
+                        <span style={{ color: isHighlighted ? highlightColor : C.text, fontWeight: 600 }}>{t.amount.toFixed(1)}</span>
+                        <span style={{ color: C.textDim, fontSize: 10 }}>{expiryStr}</span>
+                        <span style={{ color: isHighlighted ? highlightColor : C.yellow, fontWeight: 700, fontSize: isHighlighted ? 12 : 11 }}>
+                          ${notional >= 1e6 ? (notional / 1e6).toFixed(2) + "M" : (notional / 1e3).toFixed(0) + "K"}
+                        </span>
+                        <span style={{
+                          fontSize: 9, fontWeight: 700,
+                          color: tagColor,
+                          background: tagBg,
+                          padding: "2px 6px", borderRadius: 3, textAlign: "center",
+                          letterSpacing: 0.8,
+                          border: isHighlighted ? `1px solid ${highlightBorder}` : "none",
+                        }}>{tagLabel}</span>
+                        <span style={{ color: isHighlighted ? C.text : C.textDim, fontSize: 11, lineHeight: 1.5, fontWeight: isHighlighted ? 500 : 400 }}>
+                          {aggInterp || interp}
+                          {strikeContext && (
+                            <span style={{ display: "block", marginTop: 4, color: C.accent, fontSize: 10, fontWeight: 600 }}>
+                              {strikeContext}
+                            </span>
+                          )}
+                        </span>
+                      </div>
+                    );
+                  });
+                })()
+              )}
+            </div>
+            {/* Bottom fade gradient for scroll indicator */}
+            {sortedTrades.length > 3 && (
+              <div style={{
+                position: "absolute", bottom: 0, left: 0, right: 0, height: 40,
+                background: `linear-gradient(transparent, ${C.bg})`,
+                pointerEvents: "none", borderRadius: "0 0 8px 8px",
+              }} />
             )}
           </div>
         </>
