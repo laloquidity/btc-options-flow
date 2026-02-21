@@ -14,12 +14,6 @@ async function fetchDeribit(endpoint, params = {}) {
 }
 
 export default async function handler(req) {
-    // Verify this is a cron invocation or has auth
-    const authHeader = req.headers.get('authorization');
-    if (authHeader !== `Bearer ${process.env.CRON_SECRET}` && !process.env.VERCEL_CRON) {
-        // Allow in development or when called by Vercel Cron
-    }
-
     try {
         const supabase = createClient(
             process.env.SUPABASE_URL,
