@@ -1,4 +1,4 @@
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+const { createClient } = require('@supabase/supabase-js');
 
 const DERIBIT_API = 'https://www.deribit.com/api/v2/public';
 const SAVE_THRESHOLD_USD = 500_000;
@@ -13,7 +13,7 @@ async function fetchDeribit(endpoint, params = {}) {
     return data.result;
 }
 
-export default async function handler(req) {
+module.exports = async function handler(req, res) {
     try {
         const supabase = createClient(
             process.env.SUPABASE_URL,
@@ -24,10 +24,7 @@ export default async function handler(req) {
         const priceResult = await fetchDeribit('get_index_price', { index_name: 'btc_usd' });
         const btcPrice = priceResult?.index_price || 0;
         if (!btcPrice) {
-            return new Response(JSON.stringify({ error: 'Could not fetch BTC price' }), {
-                status: 500,
-                headers: { 'Content-Type': 'application/json' },
-            });
+            return res.status(500).json({ error: 'Could not fetch BTC price' });
         }
 
         // Fetch latest options trades
@@ -46,13 +43,10 @@ export default async function handler(req) {
         });
 
         if (whaleTrades.length === 0) {
-            return new Response(JSON.stringify({
+            return res.status(200).json({
                 message: 'No whale trades found',
                 btcPrice,
                 totalTrades: trades.length,
-            }), {
-                status: 200,
-                headers: { 'Content-Type': 'application/json' },
             });
         }
 
@@ -69,36 +63,23 @@ export default async function handler(req) {
             saved_at: Date.now(),
         }));
 
-        const { data, error } = await supabase
+        const { error } = await supabase
             .from('whale_trades')
             .upsert(rows, { onConflict: 'trade_id', ignoreDuplicates: true });
 
         if (error) {
             console.error('Supabase upsert error:', error);
-            return new Response(JSON.stringify({ error: error.message }), {
-                status: 500,
-                headers: { 'Content-Type': 'application/json' },
-            });
+            return res.status(500).json({ error: error.message });
         }
 
-        return new Response(JSON.stringify({
+        return res.status(200).json({
             message: `Processed ${whaleTrades.length} whale trades`,
             btcPrice,
             totalTrades: trades.length,
             whaleTrades: whaleTrades.length,
-        }), {
-            status: 200,
-            headers: { 'Content-Type': 'application/json' },
         });
     } catch (err) {
         console.error('Cron error:', err);
-        return new Response(JSON.stringify({ error: err.message }), {
-            status: 500,
-            headers: { 'Content-Type': 'application/json' },
-        });
+        return res.status(500).json({ error: err.message });
     }
-}
-
-export const config = {
-    runtime: 'edge',
 };

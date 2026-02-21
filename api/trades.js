@@ -1,15 +1,13 @@
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+const { createClient } = require('@supabase/supabase-js');
 
-const CORS_HEADERS = {
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type',
-};
+module.exports = async function handler(req, res) {
+    // CORS headers
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
-export default async function handler(req) {
-    // CORS preflight
     if (req.method === 'OPTIONS') {
-        return new Response(null, { status: 204, headers: CORS_HEADERS });
+        return res.status(204).end();
     }
 
     try {
@@ -20,7 +18,7 @@ export default async function handler(req) {
 
         // POST: save a trade from the client (dual-write)
         if (req.method === 'POST') {
-            const trade = await req.json();
+            const trade = req.body;
             const row = {
                 trade_id: trade.trade_id,
                 instrument_name: trade.instrument_name,
@@ -38,22 +36,15 @@ export default async function handler(req) {
                 .upsert([row], { onConflict: 'trade_id', ignoreDuplicates: true });
 
             if (error) {
-                return new Response(JSON.stringify({ error: error.message }), {
-                    status: 500,
-                    headers: { 'Content-Type': 'application/json', ...CORS_HEADERS },
-                });
+                return res.status(500).json({ error: error.message });
             }
 
-            return new Response(JSON.stringify({ ok: true }), {
-                status: 200,
-                headers: { 'Content-Type': 'application/json', ...CORS_HEADERS },
-            });
+            return res.status(200).json({ ok: true });
         }
 
         // GET: fetch trades from Supabase
-        const url = new URL(req.url);
-        const limit = parseInt(url.searchParams.get('limit') || '500', 10);
-        const since = url.searchParams.get('since');
+        const limit = parseInt(req.query.limit || '500', 10);
+        const since = req.query.since;
 
         let query = supabase
             .from('whale_trades')
@@ -68,13 +59,10 @@ export default async function handler(req) {
         const { data, error } = await query;
 
         if (error) {
-            return new Response(JSON.stringify({ error: error.message }), {
-                status: 500,
-                headers: { 'Content-Type': 'application/json', ...CORS_HEADERS },
-            });
+            return res.status(500).json({ error: error.message });
         }
 
-        // Transform column names from snake_case to camelCase for frontend compatibility
+        // Transform column names from snake_case to camelCase for frontend
         const trades = (data || []).map(row => ({
             trade_id: row.trade_id,
             instrument_name: row.instrument_name,
@@ -87,22 +75,9 @@ export default async function handler(req) {
             savedAt: parseInt(row.saved_at, 10),
         }));
 
-        return new Response(JSON.stringify({ trades, count: trades.length }), {
-            status: 200,
-            headers: {
-                'Content-Type': 'application/json',
-                'Cache-Control': 'public, max-age=10',
-                ...CORS_HEADERS,
-            },
-        });
+        res.setHeader('Cache-Control', 'public, max-age=10');
+        return res.status(200).json({ trades, count: trades.length });
     } catch (err) {
-        return new Response(JSON.stringify({ error: err.message }), {
-            status: 500,
-            headers: { 'Content-Type': 'application/json', ...CORS_HEADERS },
-        });
+        return res.status(500).json({ error: err.message });
     }
-}
-
-export const config = {
-    runtime: 'edge',
 };
