@@ -809,7 +809,7 @@ function MarketInterpretation({ trades, btcPrice, putVol, callVol }) {
 
 function SavedTradesPanel({ btcPrice }) {
   const [savedTrades, setSavedTrades] = useState(() => loadSavedTrades());
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(true);
   const [sortMode, setSortMode] = useState("weighted"); // "weighted" | "size" | "recent"
 
   // Load from Supabase API on mount, merge with localStorage
