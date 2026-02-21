@@ -972,18 +972,6 @@ function SavedTradesPanel({ btcPrice }) {
               ))}
             </div>
           )}
-          {expanded && savedTrades.length > 0 && (
-            <button
-              onClick={(e) => { e.stopPropagation(); handleClear(); }}
-              style={{
-                background: "none", border: `1px solid ${C.red}44`, color: C.red,
-                padding: "3px 10px", borderRadius: 4, cursor: "pointer",
-                fontFamily: "'JetBrains Mono', monospace", fontSize: 10,
-              }}
-            >
-              CLEAR ALL
-            </button>
-          )}
           <span style={{ color: C.textDim, fontSize: 12, transition: "transform 0.2s", transform: expanded ? "rotate(180deg)" : "rotate(0)" }}>
             ▼
           </span>
@@ -1164,8 +1152,9 @@ function SavedTradesPanel({ btcPrice }) {
             )}
           </div>
         </>
-      )}
-    </div>
+      )
+      }
+    </div >
   );
 }
 
