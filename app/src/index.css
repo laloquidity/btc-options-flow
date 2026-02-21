@@ -12,6 +12,11 @@ body,
   height: 100%;
 }
 
+/* Mobile-only labels — hidden on desktop, shown on mobile */
+.mobile-label {
+  display: none;
+}
+
 /* ============================================================
    MOBILE RESPONSIVE OVERRIDES
    ============================================================ */
@@ -23,9 +28,34 @@ body,
     overflow-x: hidden !important;
   }
 
+  /* Show mobile-only labels */
+  .mobile-label {
+    display: inline !important;
+    color: #5a6178 !important;
+    font-size: 9px !important;
+    font-weight: 400 !important;
+  }
+
   /* Stack strike heatmaps and expiry panel */
   .panels-grid {
     grid-template-columns: 1fr !important;
+  }
+
+  /* --- Whale Toolbar: stack vertically --- */
+  .whale-toolbar {
+    flex-direction: column !important;
+    align-items: flex-start !important;
+    gap: 10px !important;
+    padding: 12px 14px !important;
+  }
+
+  .whale-toolbar>div {
+    width: 100% !important;
+    flex-wrap: wrap !important;
+  }
+
+  .whale-toolbar>div:last-child {
+    justify-content: flex-start !important;
   }
 
   /* --- Whale Trades: table header hidden, rows become cards --- */
@@ -67,17 +97,6 @@ body,
   .trade-row .col-instrument,
   .trade-row .col-expiry-label {
     display: none !important;
-  }
-
-  /* Saved trades toolbar: wrap the buttons */
-  .whale-toolbar {
-    flex-wrap: wrap !important;
-    gap: 6px !important;
-  }
-
-  .whale-toolbar>span,
-  .whale-toolbar>div {
-    font-size: 10px !important;
   }
 }
 

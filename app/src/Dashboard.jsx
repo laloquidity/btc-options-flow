@@ -897,6 +897,7 @@ function SavedTradesPanel({ btcPrice }) {
       {/* Header — always visible */}
       <div
         onClick={() => setExpanded(!expanded)}
+        className="whale-toolbar"
         style={{
           padding: "14px 20px",
           borderBottom: expanded ? `1px solid ${C.border}` : "none",
@@ -909,7 +910,7 @@ function SavedTradesPanel({ btcPrice }) {
         onMouseEnter={(e) => (e.currentTarget.style.background = C.bgCardHover)}
         onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
       >
-        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
           <span style={{ fontSize: 11, color: C.textDim, textTransform: "uppercase", letterSpacing: 1.2, fontFamily: "'JetBrains Mono', monospace" }}>
             💾 Saved Whale Trades
           </span>
@@ -1126,8 +1127,8 @@ function SavedTradesPanel({ btcPrice }) {
                         <span style={{ color: parseFloat(distPct) > 0 ? C.green : parseFloat(distPct) < 0 ? C.red : C.textDim }}>
                           {distPct > 0 ? "+" : ""}{distPct}%
                         </span>
-                        <span style={{ color: isHighlighted ? highlightColor : C.text, fontWeight: 600 }}>{t.amount.toFixed(1)}</span>
-                        <span style={{ color: C.textDim, fontSize: 10 }}>{expiryStr}</span>
+                        <span style={{ color: isHighlighted ? highlightColor : C.text, fontWeight: 600 }}><span className="mobile-label">Size </span>{t.amount.toFixed(1)}<span className="mobile-label"> BTC</span></span>
+                        <span style={{ color: C.textDim, fontSize: 10 }}><span className="mobile-label">Exp </span>{expiryStr}</span>
                         <span style={{ color: isHighlighted ? highlightColor : C.yellow, fontWeight: 700, fontSize: isHighlighted ? 12 : 11 }}>
                           ${notional >= 1e6 ? (notional / 1e6).toFixed(2) + "M" : (notional / 1e3).toFixed(0) + "K"}
                         </span>
