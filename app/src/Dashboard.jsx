@@ -1,12 +1,14 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 
 // ============================================================
-// PERSISTENT TRADE STORAGE (localStorage)
+// PERSISTENT TRADE STORAGE (localStorage + Supabase API)
 // ============================================================
 
 const STORAGE_KEY = "btc_flow_saved_trades";
 const SAVE_THRESHOLD_USD = 500_000;
 const SAVE_THRESHOLD_BTC = 50; // whale-level
+
+// --- localStorage layer (offline fallback) ---
 
 function loadSavedTrades() {
   try {
@@ -25,6 +27,50 @@ function persistTrades(trades) {
   }
 }
 
+// --- Supabase API layer (persistent, gapless) ---
+
+const API_BASE = import.meta.env.VITE_API_BASE || "";
+
+async function loadTradesFromAPI(limit = 500) {
+  try {
+    const res = await fetch(`${API_BASE}/api/trades?limit=${limit}`);
+    if (!res.ok) return [];
+    const data = await res.json();
+    return data.trades || [];
+  } catch (err) {
+    console.warn("API fetch failed, using localStorage only:", err);
+    return [];
+  }
+}
+
+async function saveTradeToAPI(entry) {
+  try {
+    await fetch(`${API_BASE}/api/trades`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(entry),
+    });
+  } catch {
+    // fire-and-forget — localStorage is the fallback
+  }
+}
+
+// Merge localStorage + API trades, dedup by trade_id
+function mergeTrades(localTrades, apiTrades) {
+  const seen = new Set();
+  const merged = [];
+  // Prefer API data (more complete from cron), then local
+  for (const t of [...apiTrades, ...localTrades]) {
+    const id = t.trade_id;
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    merged.push(t);
+  }
+  return merged;
+}
+
+// --- Combined save (dual-write) ---
+
 function saveTrade(trade, btcPrice) {
   const saved = loadSavedTrades();
   // deduplicate by trade_id
@@ -40,6 +86,8 @@ function saveTrade(trade, btcPrice) {
   // cap at 500 to avoid localStorage bloat
   if (saved.length > 500) saved.length = 500;
   persistTrades(saved);
+  // Also push to API (fire-and-forget)
+  saveTradeToAPI(entry);
   return true;
 }
 
@@ -764,10 +812,38 @@ function SavedTradesPanel({ btcPrice }) {
   const [expanded, setExpanded] = useState(false);
   const [sortMode, setSortMode] = useState("weighted"); // "weighted" | "size" | "recent"
 
-  // Refresh from localStorage periodically
+  // Load from Supabase API on mount, merge with localStorage
   useEffect(() => {
-    const i = setInterval(() => setSavedTrades(loadSavedTrades()), 5000);
-    return () => clearInterval(i);
+    let cancelled = false;
+    loadTradesFromAPI().then(apiTrades => {
+      if (cancelled || !apiTrades.length) return;
+      setSavedTrades(prev => {
+        const merged = mergeTrades(prev, apiTrades);
+        persistTrades(merged); // sync to localStorage too
+        return merged;
+      });
+    });
+    return () => { cancelled = true; };
+  }, []);
+
+  // Refresh: merge localStorage + API periodically
+  useEffect(() => {
+    const i = setInterval(() => {
+      const local = loadSavedTrades();
+      setSavedTrades(local);
+    }, 5000);
+    // Also sync from API every 30s to pick up cron-captured trades
+    const apiSync = setInterval(() => {
+      loadTradesFromAPI().then(apiTrades => {
+        if (!apiTrades.length) return;
+        setSavedTrades(prev => {
+          const merged = mergeTrades(prev, apiTrades);
+          persistTrades(merged);
+          return merged;
+        });
+      });
+    }, 30000);
+    return () => { clearInterval(i); clearInterval(apiSync); };
   }, []);
 
   const handleClear = () => {
