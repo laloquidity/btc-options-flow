@@ -5,7 +5,92 @@
   box-sizing: border-box;
 }
 
-html, body, #root {
+html,
+body,
+#root {
   width: 100%;
   height: 100%;
+}
+
+/* ============================================================
+   MOBILE RESPONSIVE OVERRIDES
+   ============================================================ */
+
+@media (max-width: 768px) {
+
+  /* Prevent horizontal overflow */
+  body {
+    overflow-x: hidden !important;
+  }
+
+  /* Stack strike heatmaps and expiry panel */
+  .panels-grid {
+    grid-template-columns: 1fr !important;
+  }
+
+  /* --- Whale Trades: table header hidden, rows become cards --- */
+  .whale-header {
+    display: none !important;
+  }
+
+  .whale-row {
+    display: flex !important;
+    flex-wrap: wrap !important;
+    gap: 6px 12px !important;
+    padding: 12px 14px !important;
+    grid-template-columns: unset !important;
+  }
+
+  /* On mobile, the interpretation spans full width below the row data */
+  .whale-row .whale-interp {
+    width: 100% !important;
+    margin-top: 6px !important;
+    padding-top: 6px !important;
+    border-top: 1px solid rgba(255, 255, 255, 0.06) !important;
+  }
+
+  /* --- Recent Trades: hide less-critical columns, shrink grid --- */
+  .trades-header {
+    display: none !important;
+  }
+
+  .trade-row {
+    display: flex !important;
+    flex-wrap: wrap !important;
+    gap: 4px 10px !important;
+    padding: 8px 14px !important;
+    grid-template-columns: unset !important;
+  }
+
+  /* Hide DIST column and instrument label on mobile */
+  .trade-row .col-dist,
+  .trade-row .col-instrument,
+  .trade-row .col-expiry-label {
+    display: none !important;
+  }
+
+  /* Saved trades toolbar: wrap the buttons */
+  .whale-toolbar {
+    flex-wrap: wrap !important;
+    gap: 6px !important;
+  }
+
+  .whale-toolbar>span,
+  .whale-toolbar>div {
+    font-size: 10px !important;
+  }
+}
+
+@media (max-width: 480px) {
+
+  /* Even tighter mobile */
+  .whale-row {
+    padding: 10px 10px !important;
+    font-size: 11px !important;
+  }
+
+  .trade-row {
+    padding: 6px 10px !important;
+    font-size: 11px !important;
+  }
 }

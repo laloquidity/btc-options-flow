@@ -420,7 +420,7 @@ function TradeRow({ trade, btcPrice, index }) {
   const ts = new Date(trade.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 
   return (
-    <div style={{
+    <div className="trade-row" style={{
       display: "grid",
       gridTemplateColumns: "70px 52px 50px 85px 65px 72px 62px 55px minmax(200px, 1fr)",
       alignItems: "start",
@@ -992,7 +992,7 @@ function SavedTradesPanel({ btcPrice }) {
       {/* Expanded table */}
       {expanded && (
         <>
-          <div style={{
+          <div className="whale-header" style={{
             display: "grid",
             gridTemplateColumns: "130px 52px 50px 85px 65px 72px 72px 90px 75px minmax(200px, 1fr)",
             padding: "8px 16px", fontSize: 10, color: C.textMuted,
@@ -1100,7 +1100,7 @@ function SavedTradesPanel({ btcPrice }) {
                     const expiryStr = parsed.expiry || "—";
 
                     return (
-                      <div key={t.trade_id || i} style={{
+                      <div key={t.trade_id || i} className="whale-row" style={{
                         display: "grid",
                         gridTemplateColumns: "130px 52px 50px 85px 65px 72px 72px 90px 75px minmax(200px, 1fr)",
                         alignItems: "start", padding: "10px 16px", fontSize: 12,
@@ -1139,7 +1139,7 @@ function SavedTradesPanel({ btcPrice }) {
                           letterSpacing: 0.8,
                           border: isHighlighted ? `1px solid ${highlightBorder}` : "none",
                         }}>{tagLabel}</span>
-                        <span style={{ color: isHighlighted ? C.text : C.textDim, fontSize: 11, lineHeight: 1.5, fontWeight: isHighlighted ? 500 : 400 }}>
+                        <span className="whale-interp" style={{ color: isHighlighted ? C.text : C.textDim, fontSize: 11, lineHeight: 1.5, fontWeight: isHighlighted ? 500 : 400 }}>
                           {aggInterp || interp}
                           {strikeContext && (
                             <span style={{ display: "block", marginTop: 4, color: C.accent, fontSize: 10, fontWeight: 600 }}>
@@ -1385,7 +1385,7 @@ export default function BTCFlowDashboard() {
         </div>
 
         {/* Strike Heatmaps + Expiry */}
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 14, marginBottom: 20 }}>
+        <div className="panels-grid" style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 14, marginBottom: 20 }}>
           <StrikeHeatmap trades={trades} btcPrice={btcPrice} type="P" />
           <StrikeHeatmap trades={trades} btcPrice={btcPrice} type="C" />
           <ExpiryBreakdown trades={trades} btcPrice={btcPrice} />
@@ -1432,7 +1432,7 @@ export default function BTCFlowDashboard() {
           </div>
 
           {/* Table Header */}
-          <div style={{
+          <div className="trades-header" style={{
             display: "grid",
             gridTemplateColumns: "70px 52px 50px 85px 65px 72px 62px 55px minmax(200px, 1fr)",
             padding: "8px 16px",
