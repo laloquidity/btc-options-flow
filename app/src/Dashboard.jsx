@@ -372,8 +372,8 @@ function SentimentBar({ putVol, callVol }) {
           <span style={{ fontSize: 11, color: C.textDim, textTransform: "uppercase", letterSpacing: 1.2, fontFamily: "'JetBrains Mono', monospace" }}>
             Put / Call Flow
           </span>
-          <span style={{ fontSize: 9, color: C.textMuted, fontFamily: "'JetBrains Mono', monospace", padding: "2px 6px", background: C.border + "44", borderRadius: 3 }}>
-            Last 1h
+          <span style={{ fontSize: 9, color: C.accent, fontFamily: "'JetBrains Mono', monospace", padding: "2px 8px", background: C.accent + "18", borderRadius: 3, border: `1px solid ${C.accent}44`, fontWeight: 600, letterSpacing: 0.5 }}>
+            1H
           </span>
         </div>
         <div style={{
@@ -768,8 +768,8 @@ function MarketInterpretation({ trades, btcPrice, putVol, callVol }) {
         <span style={{ fontSize: 11, color: C.textDim, textTransform: "uppercase", letterSpacing: 1.2, fontFamily: "'JetBrains Mono', monospace" }}>
           🧠 Market Interpretation
         </span>
-        <span style={{ fontSize: 9, color: C.textMuted, fontFamily: "'JetBrains Mono', monospace", padding: "2px 6px", background: C.border + "44", borderRadius: 3 }}>
-          Last 4h
+        <span style={{ fontSize: 9, color: C.accent, fontFamily: "'JetBrains Mono', monospace", padding: "2px 8px", background: C.accent + "18", borderRadius: 3, border: `1px solid ${C.accent}44`, fontWeight: 600, letterSpacing: 0.5 }}>
+          4H
         </span>
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
