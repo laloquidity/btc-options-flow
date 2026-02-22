@@ -910,537 +910,535 @@ function SavedTradesPanel({ btcPrice }) {
   });
 
   return (
-    <div style={{ background: C.bgCard, border: `1px solid ${C.border}`, borderRadius: 8, overflow: "hidden", marginBottom: 20 }}>
-      {/* Header — always visible */}
-      <div
-        onClick={() => setExpanded(!expanded)}
-        className="whale-toolbar"
-        style={{
-          padding: "14px 20px",
-          borderBottom: expanded ? `1px solid ${C.border}` : "none",
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          cursor: "pointer",
-          transition: "background 0.15s",
-        }}
-        onMouseEnter={(e) => (e.currentTarget.style.background = C.bgCardHover)}
-        onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
-      >
-        <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-          <span style={{ fontSize: 11, color: C.textDim, textTransform: "uppercase", letterSpacing: 1.2, fontFamily: "'JetBrains Mono', monospace" }}>
-            💾 Saved Whale Trades
-          </span>
-          <span style={{
-            fontSize: 10, color: C.purple, fontWeight: 700, padding: "2px 8px",
-            background: C.purpleDim, borderRadius: 4, fontFamily: "'JetBrains Mono', monospace",
-          }}>
-            {savedTrades.length} saved
-          </span>
-          {massiveCount > 0 && (
-            <span style={{
-              fontSize: 10, color: C.gold, fontWeight: 700, padding: "2px 8px",
-              background: C.goldDim, borderRadius: 4, fontFamily: "'JetBrains Mono', monospace",
-              border: `1px solid ${C.goldBorder}`,
-            }}>
-              {massiveCount} 🔱 $10M+
-            </span>
-          )}
-          {majorCount > 0 && (
-            <span style={{
-              fontSize: 10, color: C.orange, fontWeight: 700, padding: "2px 8px",
-              background: C.orangeDim, borderRadius: 4, fontFamily: "'JetBrains Mono', monospace",
-              border: `1px solid ${C.orangeBorder}`,
-            }}>
-              {majorCount} ⚡ $1M+
-            </span>
-          )}
-          {whaleCount > 0 && (
-            <span style={{
-              fontSize: 10, color: C.yellow, fontWeight: 700, padding: "2px 8px",
-              background: C.yellowDim, borderRadius: 4, fontFamily: "'JetBrains Mono', monospace",
-            }}>
-              {whaleCount} 🐋
-            </span>
-          )}
-          <span style={{ fontSize: 10, color: C.textMuted, fontFamily: "'JetBrains Mono', monospace" }}>
-            ${totalNotional >= 1e6 ? (totalNotional / 1e6).toFixed(1) + "M" : (totalNotional / 1e3).toFixed(0) + "K"} total notional
-          </span>
-        </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          {expanded && (
-            <div style={{ display: "flex", gap: 2 }}>
-              {["weighted", "size", "recent"].map((mode) => (
-                <button
-                  key={mode}
-                  onClick={(e) => { e.stopPropagation(); setSortMode(mode); }}
-                  style={{
-                    background: sortMode === mode ? C.accent + "22" : "none",
-                    border: `1px solid ${sortMode === mode ? C.accent : C.border}`,
-                    color: sortMode === mode ? C.accent : C.textMuted,
-                    padding: "2px 8px", borderRadius: 3, cursor: "pointer",
-                    fontFamily: "'JetBrains Mono', monospace", fontSize: 9,
-                    textTransform: "uppercase", letterSpacing: 0.5,
-                    transition: "all 0.15s",
-                  }}
-                >
-                  {mode === "weighted" ? "⚖ WEIGHTED" : mode === "size" ? "💰 SIZE" : "🕐 RECENT"}
-                </button>
-              ))}
-            </div>
-          )}
-          <span style={{ color: C.textDim, fontSize: 12, transition: "transform 0.2s", transform: expanded ? "rotate(180deg)" : "rotate(0)" }}>
-            ▼
-          </span>
-        </div>
-      </div>
+    <>
+      {/* 🔥 EXPIRING SOON — standalone section above whale trades */}
+      {(() => {
+        const expiringSoon = sortedTrades.filter(t => {
+          const dte = getDTE(t);
+          const n = t.notionalUsd || 0;
+          return dte !== null && dte > 0 && dte <= 7 && n >= MAJOR_THRESHOLD_USD;
+        }).sort((a, b) => (b.notionalUsd || 0) - (a.notionalUsd || 0));
 
-      {/* Expanded table */}
-      {expanded && (
-        <>
-          {/* 🔥 EXPIRING SOON — pinned alert for near-term whale bets */}
-          {(() => {
-            const expiringSoon = sortedTrades.filter(t => {
+        if (expiringSoon.length === 0) return null;
+
+        const massiveTrades = expiringSoon.filter(t => (t.notionalUsd || 0) >= MASSIVE_THRESHOLD_USD);
+        const majorTrades = expiringSoon.filter(t => {
+          const n = t.notionalUsd || 0;
+          return n >= MAJOR_THRESHOLD_USD && n < MASSIVE_THRESHOLD_USD;
+        });
+
+        return (
+          <div className="expiring-soon" style={{
+            background: C.bgCard, border: `1px solid ${C.red}44`, borderRadius: 8,
+            overflow: "hidden", marginBottom: 12, padding: "14px 18px",
+            borderLeft: `3px solid ${C.red}`,
+          }}>
+            <div style={{
+              fontSize: 11, fontWeight: 700, color: C.red, textTransform: "uppercase",
+              letterSpacing: 1.2, marginBottom: 10,
+              fontFamily: "'JetBrains Mono', monospace",
+              display: "flex", alignItems: "center", gap: 10,
+            }}>
+              <span>🔥 Expiring This Week</span>
+              <span style={{ color: C.textMuted, fontWeight: 400, fontSize: 10, textTransform: "none", letterSpacing: 0 }}>
+                {expiringSoon.length} active {expiringSoon.length === 1 ? "bet" : "bets"}
+              </span>
+            </div>
+            {/* MASSIVE trades shown individually */}
+            {massiveTrades.map((t, i) => {
+              const p = parseInstrument(t.instrument_name);
               const dte = getDTE(t);
               const n = t.notionalUsd || 0;
-              return dte !== null && dte > 0 && dte <= 7 && n >= MAJOR_THRESHOLD_USD;
-            }).sort((a, b) => (b.notionalUsd || 0) - (a.notionalUsd || 0));
-
-            if (expiringSoon.length === 0) return null;
-
-            const massiveTrades = expiringSoon.filter(t => (t.notionalUsd || 0) >= MASSIVE_THRESHOLD_USD);
-            const majorTrades = expiringSoon.filter(t => {
-              const n = t.notionalUsd || 0;
-              return n >= MAJOR_THRESHOLD_USD && n < MASSIVE_THRESHOLD_USD;
-            });
-            const majorTotal = majorTrades.reduce((s, t) => s + (t.notionalUsd || 0), 0);
-            const majorPuts = majorTrades.filter(t => { const p = parseInstrument(t.instrument_name); return p?.type === "P"; }).length;
-            const majorCalls = majorTrades.length - majorPuts;
-
-            return (
-              <div className="expiring-soon" style={{
-                margin: "8px 12px", padding: "12px 16px",
-                background: `linear-gradient(135deg, ${C.red}12, ${C.gold}08)`,
-                border: `1px solid ${C.red}44`, borderRadius: 6,
-              }}>
-                <div style={{
-                  fontSize: 10, fontWeight: 700, color: C.red, textTransform: "uppercase",
-                  letterSpacing: 1.2, marginBottom: 8,
+              const isPut = p?.type === "P";
+              const spotMove = btcPrice && t.btcPriceAtSave
+                ? ((btcPrice - t.btcPriceAtSave) / t.btcPriceAtSave * 100).toFixed(1)
+                : null;
+              const isBuy = t.direction === "buy";
+              const favorable = isPut
+                ? (isBuy ? parseFloat(spotMove) < 0 : parseFloat(spotMove) > 0)
+                : (isBuy ? parseFloat(spotMove) > 0 : parseFloat(spotMove) < 0);
+              return (
+                <div key={t.trade_id || i} style={{
+                  display: "flex", flexWrap: "wrap", alignItems: "center", gap: "6px 12px",
+                  padding: "8px 0", fontSize: 12,
+                  borderTop: i > 0 || true ? `1px solid ${C.border}44` : "none",
                   fontFamily: "'JetBrains Mono', monospace",
                 }}>
-                  🔥 Expiring This Week — {expiringSoon.length} active whale {expiringSoon.length === 1 ? "bet" : "bets"}
+                  <span style={{
+                    color: "#fff", background: C.red, padding: "2px 8px", borderRadius: 3,
+                    fontWeight: 700, fontSize: 10,
+                  }}>
+                    exp {p?.expiry || `${dte}d`}
+                  </span>
+                  <span style={{
+                    color: isPut ? C.red : C.green, fontWeight: 700,
+                    padding: "2px 6px", borderRadius: 3,
+                    background: isPut ? C.redDim : C.greenDim,
+                    fontSize: 11,
+                  }}>
+                    {isPut ? "PUT" : "CALL"}
+                  </span>
+                  <span style={{ color: C.text, fontWeight: 600 }}>
+                    ${p?.strike.toLocaleString()}
+                  </span>
+                  <span style={{ color: C.text, fontWeight: 600 }}>
+                    {t.amount.toFixed(1)} BTC
+                  </span>
+                  <span style={{ color: C.gold, fontWeight: 700 }}>
+                    ${n >= 1e6 ? (n / 1e6).toFixed(2) + "M" : (n / 1e3).toFixed(0) + "K"}
+                  </span>
+                  <span style={{ color: C.gold, fontSize: 9, fontWeight: 700, padding: "2px 6px", background: C.goldDim, borderRadius: 3, border: `1px solid ${C.goldBorder}` }}>
+                    🔱 MASSIVE
+                  </span>
+                  {spotMove && (
+                    <span style={{ color: favorable ? C.green : C.red, fontSize: 10, fontWeight: 600 }}>
+                      Spot {parseFloat(spotMove) > 0 ? "+" : ""}{spotMove}% since entry {favorable ? "✓" : "✗"}
+                    </span>
+                  )}
+                  <span style={{ display: "block", width: "100%", color: C.textDim, fontSize: 10, lineHeight: 1.4, marginTop: 4 }}>
+                    {interpretTrade(p?.type, p?.strike, t.direction, t.amount, t.btcPriceAtSave || btcPrice, p?.expiry)}
+                  </span>
                 </div>
-                {/* MASSIVE trades shown individually */}
-                {massiveTrades.map((t, i) => {
-                  const p = parseInstrument(t.instrument_name);
-                  const dte = getDTE(t);
-                  const n = t.notionalUsd || 0;
-                  const isPut = p?.type === "P";
-                  const spotMove = btcPrice && t.btcPriceAtSave
-                    ? ((btcPrice - t.btcPriceAtSave) / t.btcPriceAtSave * 100).toFixed(1)
-                    : null;
-                  const isBuy = t.direction === "buy";
-                  const favorable = isPut
-                    ? (isBuy ? parseFloat(spotMove) < 0 : parseFloat(spotMove) > 0)
-                    : (isBuy ? parseFloat(spotMove) > 0 : parseFloat(spotMove) < 0);
-                  return (
-                    <div key={t.trade_id || i} style={{
-                      display: "flex", flexWrap: "wrap", alignItems: "center", gap: "6px 12px",
-                      padding: "8px 0", fontSize: 12,
-                      borderTop: i > 0 ? `1px solid ${C.border}44` : "none",
-                      fontFamily: "'JetBrains Mono', monospace",
-                    }}>
-                      <span style={{
-                        color: "#fff", background: C.red, padding: "2px 8px", borderRadius: 3,
-                        fontWeight: 700, fontSize: 10,
-                      }}>
-                        exp {p?.expiry || `${dte}d`}
-                      </span>
-                      <span style={{
-                        color: isPut ? C.red : C.green, fontWeight: 700,
-                        padding: "2px 6px", borderRadius: 3,
-                        background: isPut ? C.redDim : C.greenDim,
-                        fontSize: 11,
-                      }}>
-                        {isPut ? "PUT" : "CALL"}
-                      </span>
-                      <span style={{ color: C.text, fontWeight: 600 }}>
-                        ${p?.strike.toLocaleString()}
-                      </span>
-                      <span style={{ color: C.text, fontWeight: 600 }}>
-                        {t.amount.toFixed(1)} BTC
-                      </span>
-                      <span style={{ color: C.gold, fontWeight: 700 }}>
-                        ${n >= 1e6 ? (n / 1e6).toFixed(2) + "M" : (n / 1e3).toFixed(0) + "K"}
-                      </span>
-                      <span style={{ color: C.gold, fontSize: 9, fontWeight: 700, padding: "2px 6px", background: C.goldDim, borderRadius: 3, border: `1px solid ${C.goldBorder}` }}>
-                        🔱 MASSIVE
-                      </span>
-                      {spotMove && (
-                        <span style={{ color: favorable ? C.green : C.red, fontSize: 10, fontWeight: 600 }}>
-                          Spot {parseFloat(spotMove) > 0 ? "+" : ""}{spotMove}% since entry {favorable ? "✓" : "✗"}
-                        </span>
-                      )}
-                      <span style={{ display: "block", width: "100%", color: C.textDim, fontSize: 10, lineHeight: 1.4, marginTop: 4 }}>
-                        {interpretTrade(p?.type, p?.strike, t.direction, t.amount, t.btcPriceAtSave || btcPrice, p?.expiry)}
-                      </span>
-                    </div>
-                  );
-                })}
-                {/* MAJOR trades: show strike-level concentrations */}
-                {majorTrades.length > 0 && (() => {
-                  // Group by strike + type
-                  const clusters = {};
-                  majorTrades.forEach(t => {
-                    const p = parseInstrument(t.instrument_name);
-                    if (!p) return;
-                    const key = `${p.strike}_${p.type}`;
-                    if (!clusters[key]) clusters[key] = { strike: p.strike, type: p.type, total: 0, count: 0, minDTE: Infinity, expiries: new Set() };
-                    clusters[key].total += (t.notionalUsd || 0);
-                    clusters[key].count++;
-                    if (p.expiry) clusters[key].expiries.add(p.expiry);
-                    const dte = getDTE(t);
-                    if (dte !== null && dte < clusters[key].minDTE) clusters[key].minDTE = dte;
-                  });
-                  // Show clusters with $5M+ total, sorted largest first
-                  const significant = Object.values(clusters)
-                    .filter(c => c.total >= 5e6)
-                    .sort((a, b) => b.total - a.total);
-                  // Remaining trades not in significant clusters
-                  const significantKeys = new Set(significant.map(c => `${c.strike}_${c.type}`));
-                  const remaining = majorTrades.filter(t => {
-                    const p = parseInstrument(t.instrument_name);
-                    return p && !significantKeys.has(`${p.strike}_${p.type}`);
-                  });
-                  const remainingTotal = remaining.reduce((s, t) => s + (t.notionalUsd || 0), 0);
+              );
+            })}
+            {/* MAJOR trades: strike-level concentrations */}
+            {majorTrades.length > 0 && (() => {
+              const clusters = {};
+              majorTrades.forEach(t => {
+                const p = parseInstrument(t.instrument_name);
+                if (!p) return;
+                const key = `${p.strike}_${p.type}`;
+                if (!clusters[key]) clusters[key] = { strike: p.strike, type: p.type, total: 0, count: 0, minDTE: Infinity, expiries: new Set() };
+                clusters[key].total += (t.notionalUsd || 0);
+                clusters[key].count++;
+                if (p.expiry) clusters[key].expiries.add(p.expiry);
+                const dte = getDTE(t);
+                if (dte !== null && dte < clusters[key].minDTE) clusters[key].minDTE = dte;
+              });
+              const significant = Object.values(clusters)
+                .filter(c => c.total >= 5e6)
+                .sort((a, b) => b.total - a.total);
+              const significantKeys = new Set(significant.map(c => `${c.strike}_${c.type}`));
+              const remaining = majorTrades.filter(t => {
+                const p = parseInstrument(t.instrument_name);
+                return p && !significantKeys.has(`${p.strike}_${p.type}`);
+              });
+              const remainingTotal = remaining.reduce((s, t) => s + (t.notionalUsd || 0), 0);
 
-                  return (
-                    <div style={{
-                      borderTop: massiveTrades.length > 0 ? `1px solid ${C.border}44` : "none",
-                      paddingTop: 6,
-                    }}>
-                      {significant.map((c, i) => {
-                        const isPut = c.type === "P";
-                        const totalStr = c.total >= 1e6 ? `$${(c.total / 1e6).toFixed(1)}M` : `$${(c.total / 1e3).toFixed(0)}K`;
-                        return (
-                          <div key={i} style={{
-                            display: "flex", flexWrap: "wrap", alignItems: "center", gap: "4px 10px",
-                            padding: "4px 0", fontSize: 11,
-                            fontFamily: "'JetBrains Mono', monospace",
-                          }}>
-                            <span style={{ color: C.orange, fontWeight: 700, fontSize: 10 }}>📊</span>
-                            <span style={{ color: C.orange, fontWeight: 700 }}>{totalStr}</span>
-                            <span style={{ color: C.textDim }}>in</span>
-                            <span style={{
-                              color: isPut ? C.red : C.green, fontWeight: 700,
-                              padding: "1px 5px", borderRadius: 3,
-                              background: isPut ? C.redDim : C.greenDim,
-                              fontSize: 10,
-                            }}>{isPut ? "PUTS" : "CALLS"}</span>
-                            <span style={{ color: C.text }}>at ${c.strike.toLocaleString()}</span>
-                            <span style={{ color: C.textMuted, fontSize: 10 }}>
-                              ({c.count} trades{c.expiries.size === 1 ? `, exp ${[...c.expiries][0]}` : c.expiries.size === 2 ? `, exp ${[...c.expiries].join(", ")}` : `, ${c.expiries.size} expiries`})
-                            </span>
-                          </div>
-                        );
-                      })}
-                      {remaining.length > 0 && (
-                        <div style={{
-                          padding: "4px 0", fontSize: 10,
-                          fontFamily: "'JetBrains Mono', monospace",
-                          color: C.textMuted,
-                        }}>
-                          + {remaining.length} more {remaining.length === 1 ? "trade" : "trades"}
-                          {remainingTotal > 0 && ` (${remainingTotal >= 1e6 ? "$" + (remainingTotal / 1e6).toFixed(1) + "M" : "$" + (remainingTotal / 1e3).toFixed(0) + "K"})`}
-                          {" "}expiring ≤7d
-                        </div>
-                      )}
-                    </div>
-                  );
-                })()}
-              </div>
-            );
-          })()}
-          <div className="whale-header" style={{
-            display: "grid",
-            gridTemplateColumns: "130px 52px 50px 85px 65px 72px 72px 90px 75px minmax(200px, 1fr)",
-            padding: "8px 16px", fontSize: 10, color: C.textMuted,
-            textTransform: "uppercase", letterSpacing: 1,
-            borderBottom: `1px solid ${C.border}`, gap: 8,
-          }}>
-            <span>Date</span><span>Type</span><span>Side</span><span>Strike</span>
-            <span>Dist</span><span>Size</span><span>Expiry</span><span>Notional</span><span>Tag</span>
-            <span>Interpretation</span>
-          </div>
-          <div style={{ position: "relative" }}>
-            <div style={{ maxHeight: 400, overflowY: "auto" }}>
-              {savedTrades.length === 0 ? (
-                <div style={{ padding: 40, textAlign: "center", color: C.textMuted, fontFamily: "'JetBrains Mono', monospace", fontSize: 12 }}>
-                  No trades saved yet. Trades over $500K notional or ≥50 BTC are auto-saved.
-                </div>
-              ) : (
-                (() => {
-                  // Pre-compute strike-level aggregation
-                  const strikeAgg = {};
-                  savedTrades.forEach(tr => {
-                    const p = parseInstrument(tr.instrument_name);
-                    if (!p) return;
-                    const key = `${p.strike}_${p.type}`;
-                    if (!strikeAgg[key]) strikeAgg[key] = { count: 0, totalNotional: 0, expiries: new Set(), tradeIds: new Set() };
-                    strikeAgg[key].count++;
-                    strikeAgg[key].totalNotional += (tr.notionalUsd || 0);
-                    if (p.expiry) strikeAgg[key].expiries.add(p.expiry);
-                    strikeAgg[key].tradeIds.add(tr.trade_id || tr.instrument_name + tr.timestamp);
-                  });
-
-                  // Pre-compute direction clustering (nearby strikes, same type + direction)
-                  // Groups trades within ~15% of each other into "corridors"
-                  const directionClusters = {};
-                  savedTrades.forEach(tr => {
-                    const p = parseInstrument(tr.instrument_name);
-                    if (!p) return;
-                    const clusterKey = `${p.type}_${tr.direction}`;
-                    if (!directionClusters[clusterKey]) directionClusters[clusterKey] = [];
-                    directionClusters[clusterKey].push({
-                      strike: p.strike, notional: tr.notionalUsd || 0,
-                      trade_id: tr.trade_id,
-                    });
-                  });
-                  // Build corridor map: for each trade, find if it belongs to a multi-strike cluster
-                  const corridorMap = {};
-                  Object.entries(directionClusters).forEach(([key, trades]) => {
-                    if (trades.length < 3) return; // need 3+ trades to form a corridor
-                    const strikes = [...new Set(trades.map(t => t.strike))].sort((a, b) => a - b);
-                    if (strikes.length < 2) return; // need at least 2 distinct strikes
-                    // Check if strikes are within ~15% range of the median
-                    const median = strikes[Math.floor(strikes.length / 2)];
-                    const inRange = strikes.filter(s => Math.abs(s - median) / median <= 0.15);
-                    if (inRange.length < 2) return;
-                    const corridorTrades = trades.filter(t => inRange.includes(t.strike));
-                    const totalNotional = corridorTrades.reduce((s, t) => s + t.notional, 0);
-                    if (totalNotional < 5e6) return; // Only flag corridors with $5M+ total
-                    const corridorInfo = {
-                      lowStrike: Math.min(...inRange),
-                      highStrike: Math.max(...inRange),
-                      strikeCount: inRange.length,
-                      totalNotional,
-                      tradeCount: corridorTrades.length,
-                    };
-                    corridorTrades.forEach(t => {
-                      corridorMap[t.trade_id] = corridorInfo;
-                    });
-                  });
-
-                  return sortedTrades.map((t, i) => {
-                    const parsed = parseInstrument(t.instrument_name);
-                    if (!parsed) return null;
-                    const isPut = parsed.type === "P";
-                    const isBuy = t.direction === "buy";
-                    const spotAtTime = t.btcPriceAtSave || btcPrice;
-                    const distPct = spotAtTime > 0 ? ((parsed.strike - spotAtTime) / spotAtTime * 100).toFixed(1) : "—";
-                    const interp = interpretTrade(parsed.type, parsed.strike, t.direction, t.amount, spotAtTime, parsed.expiry);
-
-                    // Strike-level context
-                    const aggKey = `${parsed.strike}_${parsed.type}`;
-                    const agg = strikeAgg[aggKey];
-                    let strikeContext = "";
-                    let aggInterp = "";
-                    if (agg && agg.count >= 2) {
-                      const totalStr = agg.totalNotional >= 1e6 ? `$${(agg.totalNotional / 1e6).toFixed(2)}M` : `$${(agg.totalNotional / 1e3).toFixed(0)}K`;
-                      const expiryCount = agg.expiries.size;
-                      const typeLabel = isPut ? "put" : "call";
-                      const expiryNote = expiryCount > 1 ? ` across ${expiryCount} expiries` : "";
-
-                      // Generate upgraded interpretation based on concentration level
-                      if (agg.totalNotional >= 20e6) {
-                        // $20M+ massive accumulation — reframe the entire read
-                        if (isPut && isBuy) {
-                          aggInterp = `Part of a concentrated ${totalStr} institutional put position at $${parsed.strike.toLocaleString()}${expiryNote} (${agg.count} trades). This level of accumulation signals a deliberate portfolio-level hedge — likely protecting a very large spot or basis position against a move below $${parsed.strike.toLocaleString()}.`;
-                        } else if (isPut && !isBuy) {
-                          aggInterp = `Selling into a ${totalStr} concentrated put position at $${parsed.strike.toLocaleString()}${expiryNote} (${agg.count} trades). At this scale, likely premium harvesting by a structured products desk or closing out a portion of a massive hedge.`;
-                        } else if (!isPut && isBuy) {
-                          aggInterp = `Part of a ${totalStr} concentrated call position at $${parsed.strike.toLocaleString()}${expiryNote} (${agg.count} trades). Aggressive institutional accumulation — building a significant upside position at this strike.`;
-                        } else {
-                          aggInterp = `Selling into a ${totalStr} concentrated call position at $${parsed.strike.toLocaleString()}${expiryNote} (${agg.count} trades). Likely covered call writing or structured income at scale.`;
-                        }
-                      } else if (agg.totalNotional >= 10e6) {
-                        // $10M+ significant positioning
-                        const actionNote = isPut ? (isBuy ? "institutional hedging interest" : "premium collection") : (isBuy ? "bullish conviction" : "overwriting/income");
-                        aggInterp = `${interp} Part of ${totalStr} in ${typeLabel} flow at this strike${expiryNote} (${agg.count} trades) — ${actionNote} is building at $${parsed.strike.toLocaleString()}.`;
-                      } else {
-                        // Under $10M — just add a footnote
-                        strikeContext = ` 📊 ${agg.count} ${typeLabel} trades totaling ${totalStr} at $${parsed.strike.toLocaleString()}${expiryNote}.`;
-                      }
-                    }
-
-                    // Direction corridor context
-                    let corridorContext = "";
-                    const corridor = corridorMap[t.trade_id];
-                    if (corridor && corridor.strikeCount >= 2) {
-                      const totalStr = corridor.totalNotional >= 1e6
-                        ? `$${(corridor.totalNotional / 1e6).toFixed(1)}M`
-                        : `$${(corridor.totalNotional / 1e3).toFixed(0)}K`;
-                      const typeLabel = isPut ? "put" : "call";
-                      const actionLabel = isPut
-                        ? (isBuy ? "downside protection" : "put selling")
-                        : (isBuy ? "upside positioning" : "call overwriting");
-                      corridorContext = `🔗 ${totalStr} ${typeLabel} corridor from $${corridor.lowStrike.toLocaleString()}–$${corridor.highStrike.toLocaleString()} (${corridor.strikeCount} strikes, ${corridor.tradeCount} trades) — layered ${actionLabel}.`;
-                    }
-
-                    // Expired outcome
-                    let expiredOutcome = "";
-                    const tradeDTE = getDTE(t);
-                    if (tradeDTE !== null && tradeDTE <= 0) {
-                      const expiredITM = isPut
-                        ? btcPrice < parsed.strike
-                        : btcPrice > parsed.strike;
-                      if (expiredITM) {
-                        expiredOutcome = isPut
-                          ? `💀 EXPIRED ITM — spot ($${btcPrice.toLocaleString()}) below strike. Position printed.`
-                          : `💰 EXPIRED ITM — spot ($${btcPrice.toLocaleString()}) above strike. Position printed.`;
-                      } else {
-                        expiredOutcome = isPut
-                          ? `📋 EXPIRED OTM — spot held above $${parsed.strike.toLocaleString()}. Hedge cost absorbed.`
-                          : `📋 EXPIRED OTM — spot stayed below $${parsed.strike.toLocaleString()}. Premium lost.`;
-                      }
-                    }
-                    const notional = t.notionalUsd || t.amount * spotAtTime;
-                    const isMassive = notional >= MASSIVE_THRESHOLD_USD;
-                    const isMajor = notional >= MAJOR_THRESHOLD_USD && notional < MASSIVE_THRESHOLD_USD;
-                    const isHighlighted = isMassive || isMajor;
-                    const isWhale = t.amount >= 50;
-                    const dateStr = new Date(t.timestamp).toLocaleDateString([], { month: "short", day: "numeric" });
-                    const timeStr = new Date(t.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-
-                    // Tag tier
-                    let tagLabel, tagColor, tagBg;
-                    if (isMassive) {
-                      tagLabel = "🔱 MASSIVE";
-                      tagColor = C.gold;
-                      tagBg = C.goldDim;
-                    } else if (isMajor) {
-                      tagLabel = "⚡ MAJOR";
-                      tagColor = C.orange;
-                      tagBg = C.orangeDim;
-                    } else if (isWhale) {
-                      tagLabel = "WHALE";
-                      tagColor = C.purple;
-                      tagBg = C.purpleDim;
-                    } else {
-                      // Dynamic tag based on actual notional
-                      tagLabel = notional >= 500_000 ? ">500K" : notional >= 100_000 ? ">100K" : "SAVED";
-                      tagColor = C.accent;
-                      tagBg = C.accent + "22";
-                    }
-
-                    const highlightColor = isMassive ? C.gold : C.orange;
-                    const highlightBorder = isMassive ? C.goldBorder : C.orangeBorder;
-
-                    // Format expiry for display
-                    const expiryStr = parsed.expiry || "—";
-
+              return (
+                <div style={{ borderTop: `1px solid ${C.border}44`, paddingTop: 6 }}>
+                  {significant.map((c, i) => {
+                    const isPut = c.type === "P";
+                    const totalStr = c.total >= 1e6 ? `$${(c.total / 1e6).toFixed(1)}M` : `$${(c.total / 1e3).toFixed(0)}K`;
                     return (
-                      <div key={t.trade_id || i} className="whale-row" style={{
-                        display: "grid",
-                        gridTemplateColumns: "130px 52px 50px 85px 65px 72px 72px 90px 75px minmax(200px, 1fr)",
-                        alignItems: "start", padding: "10px 16px", fontSize: 12,
+                      <div key={i} style={{
+                        display: "flex", flexWrap: "wrap", alignItems: "center", gap: "4px 10px",
+                        padding: "4px 0", fontSize: 11,
                         fontFamily: "'JetBrains Mono', monospace",
-                        background: isHighlighted
-                          ? `linear-gradient(90deg, ${highlightColor}08, ${highlightColor}04, transparent)`
-                          : i % 2 === 0 ? "transparent" : C.bgCard + "60",
-                        borderBottom: `1px solid ${isHighlighted ? highlightBorder : C.border + "44"}`,
-                        borderLeft: isHighlighted ? `3px solid ${highlightColor}` : "3px solid transparent",
-                        gap: 8,
                       }}>
-                        <span style={{ color: isHighlighted ? highlightColor : C.textDim, fontSize: 11, fontWeight: isHighlighted ? 600 : 400 }}>{dateStr} {timeStr}</span>
+                        <span style={{ color: C.orange, fontWeight: 700, fontSize: 10 }}>📊</span>
+                        <span style={{ color: C.orange, fontWeight: 700 }}>{totalStr}</span>
+                        <span style={{ color: C.textDim }}>in</span>
                         <span style={{
                           color: isPut ? C.red : C.green, fontWeight: 700,
-                          padding: "2px 6px", borderRadius: 3,
+                          padding: "1px 5px", borderRadius: 3,
                           background: isPut ? C.redDim : C.greenDim,
-                          textAlign: "center", fontSize: 11,
-                        }}>{isPut ? "PUT" : "CALL"}</span>
-                        <span style={{ color: isBuy ? C.green : C.red, fontSize: 11, textAlign: "center" }}>
-                          {isBuy ? "BUY" : "SELL"}
-                        </span>
-                        <span style={{ color: C.text, fontWeight: 600 }}>${parsed.strike.toLocaleString()}</span>
-                        <span style={{ color: parseFloat(distPct) > 0 ? C.green : parseFloat(distPct) < 0 ? C.red : C.textDim }}>
-                          {distPct > 0 ? "+" : ""}{distPct}%
-                        </span>
-                        <span style={{ color: isHighlighted ? highlightColor : C.text, fontWeight: 600 }}><span className="mobile-label">Size </span>{t.amount.toFixed(1)}<span className="mobile-label"> BTC</span></span>
-                        <span style={{ color: C.textDim, fontSize: 10 }}><span className="mobile-label">Exp </span>{expiryStr}</span>
-                        <span style={{ color: isHighlighted ? highlightColor : C.yellow, fontWeight: 700, fontSize: isHighlighted ? 12 : 11 }}>
-                          ${notional >= 1e6 ? (notional / 1e6).toFixed(2) + "M" : (notional / 1e3).toFixed(0) + "K"}
-                        </span>
-                        <span style={{
-                          fontSize: 9, fontWeight: 700,
-                          color: tagColor,
-                          background: tagBg,
-                          padding: "2px 6px", borderRadius: 3, textAlign: "center",
-                          letterSpacing: 0.8,
-                          border: isHighlighted ? `1px solid ${highlightBorder}` : "none",
-                        }}>{tagLabel}</span>
-                        <span className="whale-interp" style={{ color: isHighlighted ? C.text : C.textDim, fontSize: 11, lineHeight: 1.5, fontWeight: isHighlighted ? 500 : 400 }}>
-                          {aggInterp || interp}
-                          {strikeContext && (
-                            <span style={{ display: "block", marginTop: 4, color: C.accent, fontSize: 10, fontWeight: 600 }}>
-                              {strikeContext}
-                            </span>
-                          )}
-                          {corridorContext && (
-                            <span className="corridor-context" style={{ display: "block", marginTop: 4, color: C.purple, fontSize: 10, fontWeight: 600 }}>
-                              {corridorContext}
-                            </span>
-                          )}
-                          {expiredOutcome && (
-                            <span style={{ display: "block", marginTop: 4, color: C.textMuted, fontSize: 10, fontWeight: 600, fontStyle: "italic" }}>
-                              {expiredOutcome}
-                            </span>
-                          )}
-                          {(() => {
-                            const dte = getDTE(t);
-                            const spotMove = btcPrice && t.btcPriceAtSave
-                              ? ((btcPrice - t.btcPriceAtSave) / t.btcPriceAtSave * 100).toFixed(1)
-                              : null;
-                            const favorable = isPut
-                              ? (isBuy ? parseFloat(spotMove) < 0 : parseFloat(spotMove) > 0)
-                              : (isBuy ? parseFloat(spotMove) > 0 : parseFloat(spotMove) < 0);
-                            const expired = dte !== null && dte <= 0;
-                            if (!spotMove && dte === null) return null;
-                            return (
-                              <span style={{ display: "block", marginTop: 4, fontSize: 10, fontWeight: 600, color: C.textMuted }}>
-                                {spotMove && (
-                                  <span style={{ color: favorable ? C.green : C.red, marginRight: 12 }}>
-                                    📈 Spot {parseFloat(spotMove) > 0 ? "+" : ""}{spotMove}% since entry {favorable ? "✓" : "✗"}
-                                  </span>
-                                )}
-                                {dte !== null && (
-                                  <span style={{ color: expired ? C.red + "88" : dte <= 7 ? C.red : C.textMuted }}>
-                                    {expired ? "⏰ Expired" : `⏱ ${dte}d to expiry`}
-                                  </span>
-                                )}
-                              </span>
-                            );
-                          })()}
+                          fontSize: 10,
+                        }}>{isPut ? "PUTS" : "CALLS"}</span>
+                        <span style={{ color: C.text }}>at ${c.strike.toLocaleString()}</span>
+                        <span style={{ color: C.textMuted, fontSize: 10 }}>
+                          ({c.count} trades{c.expiries.size === 1 ? `, exp ${[...c.expiries][0]}` : c.expiries.size === 2 ? `, exp ${[...c.expiries].join(", ")}` : `, ${c.expiries.size} expiries`})
                         </span>
                       </div>
                     );
-                  });
-                })()
+                  })}
+                  {remaining.length > 0 && (
+                    <div style={{
+                      padding: "4px 0", fontSize: 10,
+                      fontFamily: "'JetBrains Mono', monospace",
+                      color: C.textMuted,
+                    }}>
+                      + {remaining.length} more {remaining.length === 1 ? "trade" : "trades"}
+                      {remainingTotal > 0 && ` (${remainingTotal >= 1e6 ? "$" + (remainingTotal / 1e6).toFixed(1) + "M" : "$" + (remainingTotal / 1e3).toFixed(0) + "K"})`}
+                      {" "}expiring ≤7d
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
+          </div>
+        );
+      })()}
+      <div style={{ background: C.bgCard, border: `1px solid ${C.border}`, borderRadius: 8, overflow: "hidden", marginBottom: 20 }}>
+        {/* Header — always visible */}
+        <div
+          onClick={() => setExpanded(!expanded)}
+          className="whale-toolbar"
+          style={{
+            padding: "14px 20px",
+            borderBottom: expanded ? `1px solid ${C.border}` : "none",
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            cursor: "pointer",
+            transition: "background 0.15s",
+          }}
+          onMouseEnter={(e) => (e.currentTarget.style.background = C.bgCardHover)}
+          onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+            <span style={{ fontSize: 11, color: C.textDim, textTransform: "uppercase", letterSpacing: 1.2, fontFamily: "'JetBrains Mono', monospace" }}>
+              💾 Saved Whale Trades
+            </span>
+            <span style={{
+              fontSize: 10, color: C.purple, fontWeight: 700, padding: "2px 8px",
+              background: C.purpleDim, borderRadius: 4, fontFamily: "'JetBrains Mono', monospace",
+            }}>
+              {savedTrades.length} saved
+            </span>
+            {massiveCount > 0 && (
+              <span style={{
+                fontSize: 10, color: C.gold, fontWeight: 700, padding: "2px 8px",
+                background: C.goldDim, borderRadius: 4, fontFamily: "'JetBrains Mono', monospace",
+                border: `1px solid ${C.goldBorder}`,
+              }}>
+                {massiveCount} 🔱 $10M+
+              </span>
+            )}
+            {majorCount > 0 && (
+              <span style={{
+                fontSize: 10, color: C.orange, fontWeight: 700, padding: "2px 8px",
+                background: C.orangeDim, borderRadius: 4, fontFamily: "'JetBrains Mono', monospace",
+                border: `1px solid ${C.orangeBorder}`,
+              }}>
+                {majorCount} ⚡ $1M+
+              </span>
+            )}
+            {whaleCount > 0 && (
+              <span style={{
+                fontSize: 10, color: C.yellow, fontWeight: 700, padding: "2px 8px",
+                background: C.yellowDim, borderRadius: 4, fontFamily: "'JetBrains Mono', monospace",
+              }}>
+                {whaleCount} 🐋
+              </span>
+            )}
+            <span style={{ fontSize: 10, color: C.textMuted, fontFamily: "'JetBrains Mono', monospace" }}>
+              ${totalNotional >= 1e6 ? (totalNotional / 1e6).toFixed(1) + "M" : (totalNotional / 1e3).toFixed(0) + "K"} total notional
+            </span>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            {expanded && (
+              <div style={{ display: "flex", gap: 2 }}>
+                {["weighted", "size", "recent"].map((mode) => (
+                  <button
+                    key={mode}
+                    onClick={(e) => { e.stopPropagation(); setSortMode(mode); }}
+                    style={{
+                      background: sortMode === mode ? C.accent + "22" : "none",
+                      border: `1px solid ${sortMode === mode ? C.accent : C.border}`,
+                      color: sortMode === mode ? C.accent : C.textMuted,
+                      padding: "2px 8px", borderRadius: 3, cursor: "pointer",
+                      fontFamily: "'JetBrains Mono', monospace", fontSize: 9,
+                      textTransform: "uppercase", letterSpacing: 0.5,
+                      transition: "all 0.15s",
+                    }}
+                  >
+                    {mode === "weighted" ? "⚖ WEIGHTED" : mode === "size" ? "💰 SIZE" : "🕐 RECENT"}
+                  </button>
+                ))}
+              </div>
+            )}
+            <span style={{ color: C.textDim, fontSize: 12, transition: "transform 0.2s", transform: expanded ? "rotate(180deg)" : "rotate(0)" }}>
+              ▼
+            </span>
+          </div>
+        </div>
+
+        {/* Expanded table */}
+        {expanded && (
+          <>
+            {/* 🔥 Expiring Soon now rendered as standalone card above */}
+            <div className="whale-header" style={{
+              display: "grid",
+              gridTemplateColumns: "130px 52px 50px 85px 65px 72px 72px 90px 75px minmax(200px, 1fr)",
+              padding: "8px 16px", fontSize: 10, color: C.textMuted,
+              textTransform: "uppercase", letterSpacing: 1,
+              borderBottom: `1px solid ${C.border}`, gap: 8,
+            }}>
+              <span>Date</span><span>Type</span><span>Side</span><span>Strike</span>
+              <span>Dist</span><span>Size</span><span>Expiry</span><span>Notional</span><span>Tag</span>
+              <span>Interpretation</span>
+            </div>
+            <div style={{ position: "relative" }}>
+              <div style={{ maxHeight: 400, overflowY: "auto" }}>
+                {savedTrades.length === 0 ? (
+                  <div style={{ padding: 40, textAlign: "center", color: C.textMuted, fontFamily: "'JetBrains Mono', monospace", fontSize: 12 }}>
+                    No trades saved yet. Trades over $500K notional or ≥50 BTC are auto-saved.
+                  </div>
+                ) : (
+                  (() => {
+                    // Pre-compute strike-level aggregation
+                    const strikeAgg = {};
+                    savedTrades.forEach(tr => {
+                      const p = parseInstrument(tr.instrument_name);
+                      if (!p) return;
+                      const key = `${p.strike}_${p.type}`;
+                      if (!strikeAgg[key]) strikeAgg[key] = { count: 0, totalNotional: 0, expiries: new Set(), tradeIds: new Set() };
+                      strikeAgg[key].count++;
+                      strikeAgg[key].totalNotional += (tr.notionalUsd || 0);
+                      if (p.expiry) strikeAgg[key].expiries.add(p.expiry);
+                      strikeAgg[key].tradeIds.add(tr.trade_id || tr.instrument_name + tr.timestamp);
+                    });
+
+                    // Pre-compute direction clustering (nearby strikes, same type + direction)
+                    // Groups trades within ~15% of each other into "corridors"
+                    const directionClusters = {};
+                    savedTrades.forEach(tr => {
+                      const p = parseInstrument(tr.instrument_name);
+                      if (!p) return;
+                      const clusterKey = `${p.type}_${tr.direction}`;
+                      if (!directionClusters[clusterKey]) directionClusters[clusterKey] = [];
+                      directionClusters[clusterKey].push({
+                        strike: p.strike, notional: tr.notionalUsd || 0,
+                        trade_id: tr.trade_id,
+                      });
+                    });
+                    // Build corridor map: for each trade, find if it belongs to a multi-strike cluster
+                    const corridorMap = {};
+                    Object.entries(directionClusters).forEach(([key, trades]) => {
+                      if (trades.length < 3) return; // need 3+ trades to form a corridor
+                      const strikes = [...new Set(trades.map(t => t.strike))].sort((a, b) => a - b);
+                      if (strikes.length < 2) return; // need at least 2 distinct strikes
+                      // Check if strikes are within ~15% range of the median
+                      const median = strikes[Math.floor(strikes.length / 2)];
+                      const inRange = strikes.filter(s => Math.abs(s - median) / median <= 0.15);
+                      if (inRange.length < 2) return;
+                      const corridorTrades = trades.filter(t => inRange.includes(t.strike));
+                      const totalNotional = corridorTrades.reduce((s, t) => s + t.notional, 0);
+                      if (totalNotional < 5e6) return; // Only flag corridors with $5M+ total
+                      const corridorInfo = {
+                        lowStrike: Math.min(...inRange),
+                        highStrike: Math.max(...inRange),
+                        strikeCount: inRange.length,
+                        totalNotional,
+                        tradeCount: corridorTrades.length,
+                      };
+                      corridorTrades.forEach(t => {
+                        corridorMap[t.trade_id] = corridorInfo;
+                      });
+                    });
+
+                    return sortedTrades.map((t, i) => {
+                      const parsed = parseInstrument(t.instrument_name);
+                      if (!parsed) return null;
+                      const isPut = parsed.type === "P";
+                      const isBuy = t.direction === "buy";
+                      const spotAtTime = t.btcPriceAtSave || btcPrice;
+                      const distPct = spotAtTime > 0 ? ((parsed.strike - spotAtTime) / spotAtTime * 100).toFixed(1) : "—";
+                      const interp = interpretTrade(parsed.type, parsed.strike, t.direction, t.amount, spotAtTime, parsed.expiry);
+
+                      // Strike-level context
+                      const aggKey = `${parsed.strike}_${parsed.type}`;
+                      const agg = strikeAgg[aggKey];
+                      let strikeContext = "";
+                      let aggInterp = "";
+                      if (agg && agg.count >= 2) {
+                        const totalStr = agg.totalNotional >= 1e6 ? `$${(agg.totalNotional / 1e6).toFixed(2)}M` : `$${(agg.totalNotional / 1e3).toFixed(0)}K`;
+                        const expiryCount = agg.expiries.size;
+                        const typeLabel = isPut ? "put" : "call";
+                        const expiryNote = expiryCount > 1 ? ` across ${expiryCount} expiries` : "";
+
+                        // Generate upgraded interpretation based on concentration level
+                        if (agg.totalNotional >= 20e6) {
+                          // $20M+ massive accumulation — reframe the entire read
+                          if (isPut && isBuy) {
+                            aggInterp = `Part of a concentrated ${totalStr} institutional put position at $${parsed.strike.toLocaleString()}${expiryNote} (${agg.count} trades). This level of accumulation signals a deliberate portfolio-level hedge — likely protecting a very large spot or basis position against a move below $${parsed.strike.toLocaleString()}.`;
+                          } else if (isPut && !isBuy) {
+                            aggInterp = `Selling into a ${totalStr} concentrated put position at $${parsed.strike.toLocaleString()}${expiryNote} (${agg.count} trades). At this scale, likely premium harvesting by a structured products desk or closing out a portion of a massive hedge.`;
+                          } else if (!isPut && isBuy) {
+                            aggInterp = `Part of a ${totalStr} concentrated call position at $${parsed.strike.toLocaleString()}${expiryNote} (${agg.count} trades). Aggressive institutional accumulation — building a significant upside position at this strike.`;
+                          } else {
+                            aggInterp = `Selling into a ${totalStr} concentrated call position at $${parsed.strike.toLocaleString()}${expiryNote} (${agg.count} trades). Likely covered call writing or structured income at scale.`;
+                          }
+                        } else if (agg.totalNotional >= 10e6) {
+                          // $10M+ significant positioning
+                          const actionNote = isPut ? (isBuy ? "institutional hedging interest" : "premium collection") : (isBuy ? "bullish conviction" : "overwriting/income");
+                          aggInterp = `${interp} Part of ${totalStr} in ${typeLabel} flow at this strike${expiryNote} (${agg.count} trades) — ${actionNote} is building at $${parsed.strike.toLocaleString()}.`;
+                        } else {
+                          // Under $10M — just add a footnote
+                          strikeContext = ` 📊 ${agg.count} ${typeLabel} trades totaling ${totalStr} at $${parsed.strike.toLocaleString()}${expiryNote}.`;
+                        }
+                      }
+
+                      // Direction corridor context
+                      let corridorContext = "";
+                      const corridor = corridorMap[t.trade_id];
+                      if (corridor && corridor.strikeCount >= 2) {
+                        const totalStr = corridor.totalNotional >= 1e6
+                          ? `$${(corridor.totalNotional / 1e6).toFixed(1)}M`
+                          : `$${(corridor.totalNotional / 1e3).toFixed(0)}K`;
+                        const typeLabel = isPut ? "put" : "call";
+                        const actionLabel = isPut
+                          ? (isBuy ? "downside protection" : "put selling")
+                          : (isBuy ? "upside positioning" : "call overwriting");
+                        corridorContext = `🔗 ${totalStr} ${typeLabel} corridor from $${corridor.lowStrike.toLocaleString()}–$${corridor.highStrike.toLocaleString()} (${corridor.strikeCount} strikes, ${corridor.tradeCount} trades) — layered ${actionLabel}.`;
+                      }
+
+                      // Expired outcome
+                      let expiredOutcome = "";
+                      const tradeDTE = getDTE(t);
+                      if (tradeDTE !== null && tradeDTE <= 0) {
+                        const expiredITM = isPut
+                          ? btcPrice < parsed.strike
+                          : btcPrice > parsed.strike;
+                        if (expiredITM) {
+                          expiredOutcome = isPut
+                            ? `💀 EXPIRED ITM — spot ($${btcPrice.toLocaleString()}) below strike. Position printed.`
+                            : `💰 EXPIRED ITM — spot ($${btcPrice.toLocaleString()}) above strike. Position printed.`;
+                        } else {
+                          expiredOutcome = isPut
+                            ? `📋 EXPIRED OTM — spot held above $${parsed.strike.toLocaleString()}. Hedge cost absorbed.`
+                            : `📋 EXPIRED OTM — spot stayed below $${parsed.strike.toLocaleString()}. Premium lost.`;
+                        }
+                      }
+                      const notional = t.notionalUsd || t.amount * spotAtTime;
+                      const isMassive = notional >= MASSIVE_THRESHOLD_USD;
+                      const isMajor = notional >= MAJOR_THRESHOLD_USD && notional < MASSIVE_THRESHOLD_USD;
+                      const isHighlighted = isMassive || isMajor;
+                      const isWhale = t.amount >= 50;
+                      const dateStr = new Date(t.timestamp).toLocaleDateString([], { month: "short", day: "numeric" });
+                      const timeStr = new Date(t.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+
+                      // Tag tier
+                      let tagLabel, tagColor, tagBg;
+                      if (isMassive) {
+                        tagLabel = "🔱 MASSIVE";
+                        tagColor = C.gold;
+                        tagBg = C.goldDim;
+                      } else if (isMajor) {
+                        tagLabel = "⚡ MAJOR";
+                        tagColor = C.orange;
+                        tagBg = C.orangeDim;
+                      } else if (isWhale) {
+                        tagLabel = "WHALE";
+                        tagColor = C.purple;
+                        tagBg = C.purpleDim;
+                      } else {
+                        // Dynamic tag based on actual notional
+                        tagLabel = notional >= 500_000 ? ">500K" : notional >= 100_000 ? ">100K" : "SAVED";
+                        tagColor = C.accent;
+                        tagBg = C.accent + "22";
+                      }
+
+                      const highlightColor = isMassive ? C.gold : C.orange;
+                      const highlightBorder = isMassive ? C.goldBorder : C.orangeBorder;
+
+                      // Format expiry for display
+                      const expiryStr = parsed.expiry || "—";
+
+                      return (
+                        <div key={t.trade_id || i} className="whale-row" style={{
+                          display: "grid",
+                          gridTemplateColumns: "130px 52px 50px 85px 65px 72px 72px 90px 75px minmax(200px, 1fr)",
+                          alignItems: "start", padding: "10px 16px", fontSize: 12,
+                          fontFamily: "'JetBrains Mono', monospace",
+                          background: isHighlighted
+                            ? `linear-gradient(90deg, ${highlightColor}08, ${highlightColor}04, transparent)`
+                            : i % 2 === 0 ? "transparent" : C.bgCard + "60",
+                          borderBottom: `1px solid ${isHighlighted ? highlightBorder : C.border + "44"}`,
+                          borderLeft: isHighlighted ? `3px solid ${highlightColor}` : "3px solid transparent",
+                          gap: 8,
+                        }}>
+                          <span style={{ color: isHighlighted ? highlightColor : C.textDim, fontSize: 11, fontWeight: isHighlighted ? 600 : 400 }}>{dateStr} {timeStr}</span>
+                          <span style={{
+                            color: isPut ? C.red : C.green, fontWeight: 700,
+                            padding: "2px 6px", borderRadius: 3,
+                            background: isPut ? C.redDim : C.greenDim,
+                            textAlign: "center", fontSize: 11,
+                          }}>{isPut ? "PUT" : "CALL"}</span>
+                          <span style={{ color: isBuy ? C.green : C.red, fontSize: 11, textAlign: "center" }}>
+                            {isBuy ? "BUY" : "SELL"}
+                          </span>
+                          <span style={{ color: C.text, fontWeight: 600 }}>${parsed.strike.toLocaleString()}</span>
+                          <span style={{ color: parseFloat(distPct) > 0 ? C.green : parseFloat(distPct) < 0 ? C.red : C.textDim }}>
+                            {distPct > 0 ? "+" : ""}{distPct}%
+                          </span>
+                          <span style={{ color: isHighlighted ? highlightColor : C.text, fontWeight: 600 }}><span className="mobile-label">Size </span>{t.amount.toFixed(1)}<span className="mobile-label"> BTC</span></span>
+                          <span style={{ color: C.textDim, fontSize: 10 }}><span className="mobile-label">Exp </span>{expiryStr}</span>
+                          <span style={{ color: isHighlighted ? highlightColor : C.yellow, fontWeight: 700, fontSize: isHighlighted ? 12 : 11 }}>
+                            ${notional >= 1e6 ? (notional / 1e6).toFixed(2) + "M" : (notional / 1e3).toFixed(0) + "K"}
+                          </span>
+                          <span style={{
+                            fontSize: 9, fontWeight: 700,
+                            color: tagColor,
+                            background: tagBg,
+                            padding: "2px 6px", borderRadius: 3, textAlign: "center",
+                            letterSpacing: 0.8,
+                            border: isHighlighted ? `1px solid ${highlightBorder}` : "none",
+                          }}>{tagLabel}</span>
+                          <span className="whale-interp" style={{ color: isHighlighted ? C.text : C.textDim, fontSize: 11, lineHeight: 1.5, fontWeight: isHighlighted ? 500 : 400 }}>
+                            {aggInterp || interp}
+                            {strikeContext && (
+                              <span style={{ display: "block", marginTop: 4, color: C.accent, fontSize: 10, fontWeight: 600 }}>
+                                {strikeContext}
+                              </span>
+                            )}
+                            {corridorContext && (
+                              <span className="corridor-context" style={{ display: "block", marginTop: 4, color: C.purple, fontSize: 10, fontWeight: 600 }}>
+                                {corridorContext}
+                              </span>
+                            )}
+                            {expiredOutcome && (
+                              <span style={{ display: "block", marginTop: 4, color: C.textMuted, fontSize: 10, fontWeight: 600, fontStyle: "italic" }}>
+                                {expiredOutcome}
+                              </span>
+                            )}
+                            {(() => {
+                              const dte = getDTE(t);
+                              const spotMove = btcPrice && t.btcPriceAtSave
+                                ? ((btcPrice - t.btcPriceAtSave) / t.btcPriceAtSave * 100).toFixed(1)
+                                : null;
+                              const favorable = isPut
+                                ? (isBuy ? parseFloat(spotMove) < 0 : parseFloat(spotMove) > 0)
+                                : (isBuy ? parseFloat(spotMove) > 0 : parseFloat(spotMove) < 0);
+                              const expired = dte !== null && dte <= 0;
+                              if (!spotMove && dte === null) return null;
+                              return (
+                                <span style={{ display: "block", marginTop: 4, fontSize: 10, fontWeight: 600, color: C.textMuted }}>
+                                  {spotMove && (
+                                    <span style={{ color: favorable ? C.green : C.red, marginRight: 12 }}>
+                                      📈 Spot {parseFloat(spotMove) > 0 ? "+" : ""}{spotMove}% since entry {favorable ? "✓" : "✗"}
+                                    </span>
+                                  )}
+                                  {dte !== null && (
+                                    <span style={{ color: expired ? C.red + "88" : dte <= 7 ? C.red : C.textMuted }}>
+                                      {expired ? "⏰ Expired" : `⏱ ${dte}d to expiry`}
+                                    </span>
+                                  )}
+                                </span>
+                              );
+                            })()}
+                          </span>
+                        </div>
+                      );
+                    });
+                  })()
+                )}
+              </div>
+              {/* Bottom fade gradient for scroll indicator */}
+              {sortedTrades.length > 3 && (
+                <div style={{
+                  position: "absolute", bottom: 0, left: 0, right: 0, height: 40,
+                  background: `linear-gradient(transparent, ${C.bg})`,
+                  pointerEvents: "none", borderRadius: "0 0 8px 8px",
+                }} />
               )}
             </div>
-            {/* Bottom fade gradient for scroll indicator */}
-            {sortedTrades.length > 3 && (
-              <div style={{
-                position: "absolute", bottom: 0, left: 0, right: 0, height: 40,
-                background: `linear-gradient(transparent, ${C.bg})`,
-                pointerEvents: "none", borderRadius: "0 0 8px 8px",
-              }} />
-            )}
-          </div>
-        </>
-      )
-      }
-    </div >
+          </>
+        )
+        }
+      </div >
+    </>
   );
 }
 
