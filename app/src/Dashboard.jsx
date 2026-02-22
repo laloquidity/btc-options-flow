@@ -473,7 +473,7 @@ function TradeRow({ trade, btcPrice, index }) {
           letterSpacing: 0.8,
         }}>{sizeLabel}</span>
       ) : <span />}
-      <span style={{ color: C.textDim, fontSize: 11, lineHeight: 1.5 }}>
+      <span className="trade-interp" style={{ color: C.textDim, fontSize: 11, lineHeight: 1.5 }}>
         {interp}
       </span>
     </div>
@@ -1018,7 +1018,7 @@ function SavedTradesPanel({ btcPrice }) {
             const majorCalls = majorTrades.length - majorPuts;
 
             return (
-              <div style={{
+              <div className="expiring-soon" style={{
                 margin: "8px 12px", padding: "12px 16px",
                 background: `linear-gradient(135deg, ${C.red}12, ${C.gold}08)`,
                 border: `1px solid ${C.red}44`, borderRadius: 6,
@@ -1338,7 +1338,7 @@ function SavedTradesPanel({ btcPrice }) {
                             </span>
                           )}
                           {corridorContext && (
-                            <span style={{ display: "block", marginTop: 4, color: C.purple, fontSize: 10, fontWeight: 600 }}>
+                            <span className="corridor-context" style={{ display: "block", marginTop: 4, color: C.purple, fontSize: 10, fontWeight: 600 }}>
                               {corridorContext}
                             </span>
                           )}

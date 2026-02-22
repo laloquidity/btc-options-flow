@@ -98,6 +98,48 @@ body,
   .trade-row .col-expiry-label {
     display: none !important;
   }
+
+  /* --- Interpretation: truncate on mobile for density --- */
+  .whale-row .whale-interp {
+    display: -webkit-box !important;
+    -webkit-line-clamp: 3 !important;
+    -webkit-box-orient: vertical !important;
+    overflow: hidden !important;
+    max-height: 4.5em !important;
+  }
+
+  /* Expanded interpretation (toggled via JS) */
+  .whale-row .whale-interp.interp-expanded {
+    -webkit-line-clamp: unset !important;
+    max-height: none !important;
+    display: block !important;
+  }
+
+  /* Hide corridor context on mobile — secondary info */
+  .corridor-context {
+    display: none !important;
+  }
+
+  /* Compact Expiring Soon section */
+  .expiring-soon {
+    margin: 4px 8px !important;
+    padding: 8px 12px !important;
+  }
+
+  /* Tighter whale card spacing on mobile */
+  .whale-row {
+    padding: 10px 12px !important;
+    gap: 4px 8px !important;
+  }
+
+  /* Recent trades: truncate interpretation */
+  .trade-row .trade-interp {
+    display: -webkit-box !important;
+    -webkit-line-clamp: 2 !important;
+    -webkit-box-orient: vertical !important;
+    overflow: hidden !important;
+    max-height: 3em !important;
+  }
 }
 
 @media (max-width: 480px) {
