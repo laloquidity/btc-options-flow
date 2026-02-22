@@ -314,6 +314,51 @@ function interpretTrade(type, strike, direction, amount, btcPrice, expiry) {
   return main;
 }
 
+// Check if other saved trades suggest a multi-leg structure
+function findRelatedLegHint(trade, allTrades, btcPrice) {
+  if (!trade || !allTrades || allTrades.length < 2) return null;
+  const p = parseInstrument(trade.instrument_name);
+  if (!p) return null;
+
+  const SIZE_TOLERANCE = 0.15; // tighter 15% for hints
+
+  const related = allTrades.filter(t => {
+    if (t.trade_id === trade.trade_id) return false;
+    const tp = parseInstrument(t.instrument_name);
+    if (!tp || tp.expiry !== p.expiry) return false;
+    // Size must be close
+    const sizeRatio = Math.min(t.amount, trade.amount) / Math.max(t.amount, trade.amount);
+    if (sizeRatio < (1 - SIZE_TOLERANCE)) return false;
+    // Must be complementary (different direction OR different type)
+    return (t.direction !== trade.direction || tp.type !== p.type);
+  });
+
+  if (related.length === 0) return null;
+
+  // Build hint
+  const r = related[0];
+  const rp = parseInstrument(r.instrument_name);
+  const isPut = rp.type === "P";
+  const dirLabel = r.direction === "buy" ? "buy" : "sell";
+  const typeLabel = isPut ? "put" : "call";
+
+  // Identify the likely structure
+  let structureHint = "";
+  if (p.type === rp.type && trade.direction !== r.direction) {
+    // Same type, opposite direction = vertical spread
+    const isBearish = (p.type === "P" && trade.direction === "buy" && p.strike > rp.strike) ||
+      (p.type === "C" && trade.direction === "sell" && p.strike < rp.strike);
+    structureHint = isBearish ? "bear spread" : "bull spread";
+  } else if (p.type !== rp.type && trade.direction === r.direction) {
+    structureHint = p.strike === rp.strike || Math.abs(p.strike - rp.strike) / btcPrice < 0.02
+      ? "straddle" : "strangle";
+  } else if (p.type !== rp.type && trade.direction !== r.direction) {
+    structureHint = "risk reversal";
+  }
+
+  return `Note: A matching ${r.amount.toFixed(0)} BTC ${typeLabel} ${dirLabel} exists at $${rp.strike.toLocaleString()} (same expiry)${structureHint ? ` — these may be legs of a ${structureHint}` : ""}. Review both positions together for full context.`;
+}
+
 // ============================================================
 // COMPONENTS
 // ============================================================
@@ -467,7 +512,7 @@ function TradeRow({ trade, btcPrice, index }) {
         {distPct > 0 ? "+" : ""}{distPct}%
       </span>
       <span style={{ color: C.text, fontWeight: 600 }}>{amount.toFixed(1)}</span>
-      <span style={{ color: C.textDim }}>{parsed.expiry}</span>
+      <span style={{ color: C.accent, fontSize: 10, padding: "2px 6px", background: C.accent + "15", borderRadius: 3, border: `1px solid ${C.accent}33`, fontWeight: 600 }}>{parsed.expiry}</span>
       {sizeLabel ? (
         <span style={{
           fontSize: 9,
@@ -1013,6 +1058,15 @@ function SavedTradesPanel({ btcPrice }) {
                   <span style={{ display: "block", width: "100%", color: C.textDim, fontSize: 10, lineHeight: 1.4, marginTop: 4 }}>
                     {interpretTrade(p?.type, p?.strike, t.direction, t.amount, t.btcPriceAtSave || btcPrice, p?.expiry)}
                   </span>
+                  {(() => {
+                    const hint = findRelatedLegHint(t, sortedTrades, btcPrice);
+                    if (!hint) return null;
+                    return (
+                      <span style={{ display: "block", width: "100%", color: C.yellow, fontSize: 9, lineHeight: 1.4, marginTop: 4, fontStyle: "italic" }}>
+                        🔗 {hint}
+                      </span>
+                    );
+                  })()}
                 </div>
               );
             })}
@@ -1379,7 +1433,7 @@ function SavedTradesPanel({ btcPrice }) {
                             {distPct > 0 ? "+" : ""}{distPct}%
                           </span>
                           <span style={{ color: isHighlighted ? highlightColor : C.text, fontWeight: 600 }}><span className="mobile-label">Size </span>{t.amount.toFixed(1)}<span className="mobile-label"> BTC</span></span>
-                          <span style={{ color: C.textDim, fontSize: 10 }}><span className="mobile-label">Exp </span>{expiryStr}</span>
+                          <span style={{ color: C.accent, fontSize: 10, padding: "2px 6px", background: C.accent + "15", borderRadius: 3, border: `1px solid ${C.accent}33`, fontWeight: 600 }}><span className="mobile-label">Exp </span>{expiryStr}</span>
                           <span style={{ color: isHighlighted ? highlightColor : C.yellow, fontWeight: 700, fontSize: isHighlighted ? 12 : 11 }}>
                             ${notional >= 1e6 ? (notional / 1e6).toFixed(2) + "M" : (notional / 1e3).toFixed(0) + "K"}
                           </span>
@@ -1430,6 +1484,15 @@ function SavedTradesPanel({ btcPrice }) {
                                       {expired ? "⏰ Expired" : `⏱ ${dte}d to expiry`}
                                     </span>
                                   )}
+                                </span>
+                              );
+                            })()}
+                            {(() => {
+                              const hint = findRelatedLegHint(t, savedTrades, btcPrice);
+                              if (!hint) return null;
+                              return (
+                                <span style={{ display: "block", marginTop: 4, color: C.yellow, fontSize: 9, fontWeight: 600, fontStyle: "italic" }}>
+                                  🔗 {hint}
                                 </span>
                               );
                             })()}
