@@ -1081,6 +1081,9 @@ function SavedTradesPanel({ btcPrice }) {
                           Spot {parseFloat(spotMove) > 0 ? "+" : ""}{spotMove}% since entry {favorable ? "✓" : "✗"}
                         </span>
                       )}
+                      <span style={{ display: "block", width: "100%", color: C.textDim, fontSize: 10, lineHeight: 1.4, marginTop: 4 }}>
+                        {interpretTrade(p?.type, p?.strike, t.direction, t.amount, t.btcPriceAtSave || btcPrice, p?.expiry)}
+                      </span>
                     </div>
                   );
                 })}
@@ -1136,7 +1139,7 @@ function SavedTradesPanel({ btcPrice }) {
                             }}>{isPut ? "PUTS" : "CALLS"}</span>
                             <span style={{ color: C.text }}>at ${c.strike.toLocaleString()}</span>
                             <span style={{ color: C.textMuted, fontSize: 10 }}>
-                              ({c.count} trades{c.expiries.size === 1 ? `, exp ${[...c.expiries][0]}` : `, ${c.expiries.size} expiries`})
+                              ({c.count} trades{c.expiries.size === 1 ? `, exp ${[...c.expiries][0]}` : c.expiries.size === 2 ? `, exp ${[...c.expiries].join(", ")}` : `, ${c.expiries.size} expiries`})
                             </span>
                           </div>
                         );
