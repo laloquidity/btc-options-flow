@@ -156,12 +156,14 @@ async function fetchBTCPrice() {
   return result?.index_price || 0;
 }
 
-async function fetchOptionsTrades(count = 200) {
+async function fetchOptionsTrades(hoursAgo = 4) {
+  const startTimestamp = Date.now() - (hoursAgo * 3600 * 1000);
   const result = await fetchDeribit("get_last_trades_by_currency", {
     currency: "BTC",
     kind: "option",
-    count: count.toString(),
+    count: "1000",
     sorting: "desc",
+    start_timestamp: startTimestamp.toString(),
   });
   return result?.trades || [];
 }
@@ -366,8 +368,13 @@ function SentimentBar({ putVol, callVol }) {
   return (
     <div style={{ background: C.bgCard, border: `1px solid ${C.border}`, borderRadius: 8, padding: 20 }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-        <div style={{ fontSize: 11, color: C.textDim, textTransform: "uppercase", letterSpacing: 1.2, fontFamily: "'JetBrains Mono', monospace" }}>
-          Put / Call Flow
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <span style={{ fontSize: 11, color: C.textDim, textTransform: "uppercase", letterSpacing: 1.2, fontFamily: "'JetBrains Mono', monospace" }}>
+            Put / Call Flow
+          </span>
+          <span style={{ fontSize: 9, color: C.textMuted, fontFamily: "'JetBrains Mono', monospace", padding: "2px 6px", background: C.border + "44", borderRadius: 3 }}>
+            Last 1h
+          </span>
         </div>
         <div style={{
           fontSize: 11,
@@ -757,8 +764,13 @@ function MarketInterpretation({ trades, btcPrice, putVol, callVol }) {
 
   return (
     <div style={{ background: C.bgCard, border: `1px solid ${C.border}`, borderRadius: 8, padding: 20 }}>
-      <div style={{ fontSize: 11, color: C.textDim, textTransform: "uppercase", letterSpacing: 1.2, marginBottom: 16, fontFamily: "'JetBrains Mono', monospace" }}>
-        🧠 Market Interpretation
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
+        <span style={{ fontSize: 11, color: C.textDim, textTransform: "uppercase", letterSpacing: 1.2, fontFamily: "'JetBrains Mono', monospace" }}>
+          🧠 Market Interpretation
+        </span>
+        <span style={{ fontSize: 9, color: C.textMuted, fontFamily: "'JetBrains Mono', monospace", padding: "2px 6px", background: C.border + "44", borderRadius: 3 }}>
+          Last 4h
+        </span>
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
         {visibleInsights.map((ins, i) => (
@@ -1492,29 +1504,36 @@ export default function BTCFlowDashboard() {
 
   const fetchData = useCallback(async () => {
     try {
-      const [price, rawTrades] = await Promise.all([
+      const [price, trades1h, trades4h] = await Promise.all([
         fetchBTCPrice(),
-        fetchOptionsTrades(200),
+        fetchOptionsTrades(1),   // 1h window for P/C sentiment
+        fetchOptionsTrades(4),   // 4h window for interpretation + trade list
       ]);
 
       if (price) setBtcPrice(price);
-      if (rawTrades && rawTrades.length > 0) {
-        setTrades(rawTrades);
 
+      // 1h data → P/C ratio and sentiment
+      if (trades1h && trades1h.length > 0) {
         let puts = 0, calls = 0;
-        let newSaves = 0;
-        rawTrades.forEach((t) => {
+        trades1h.forEach((t) => {
           const p = parseInstrument(t.instrument_name);
           if (p?.type === "P") puts += t.amount;
           else if (p?.type === "C") calls += t.amount;
-          // Auto-save large trades
+        });
+        setPutVol(puts);
+        setCallVol(calls);
+      }
+
+      // 4h data → trade list, auto-save, interpretation
+      if (trades4h && trades4h.length > 0) {
+        setTrades(trades4h);
+        let newSaves = 0;
+        trades4h.forEach((t) => {
           if (price > 0 && shouldSaveTrade(t, price)) {
             if (saveTrade(t, price)) newSaves++;
           }
         });
         if (newSaves > 0) console.log(`[BTC Flow] Auto-saved ${newSaves} whale/large trades`);
-        setPutVol(puts);
-        setCallVol(calls);
         setStatus("connected");
         setLastUpdate(new Date().toLocaleTimeString());
         setError(null);
@@ -1622,27 +1641,27 @@ export default function BTCFlowDashboard() {
           />
           <StatCard
             icon="📊"
-            label="P/C Ratio"
+            label="P/C Ratio (1h)"
             value={callVol > 0 ? (putVol / callVol).toFixed(2) : "—"}
             color={callVol > 0 && putVol / callVol > 1.5 ? C.red : callVol > 0 && putVol / callVol < 0.7 ? C.green : C.yellow}
             sub={`${putVol.toFixed(0)} P / ${callVol.toFixed(0)} C`}
           />
           <StatCard
             icon="📡"
-            label="Trades Tracked"
+            label="Trades Tracked (4h)"
             value={trades.length}
             color={C.accent}
             sub={`${largeTrades} notable · ${whaleTrades} whale`}
           />
           <StatCard
             icon="🔴"
-            label="Put Volume"
+            label="Put Volume (1h)"
             value={`${putVol.toFixed(1)} BTC`}
             color={C.red}
           />
           <StatCard
             icon="🟢"
-            label="Call Volume"
+            label="Call Volume (1h)"
             value={`${callVol.toFixed(1)} BTC`}
             color={C.green}
           />
