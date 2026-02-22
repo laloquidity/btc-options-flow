@@ -1104,6 +1104,45 @@ function SavedTradesPanel({ btcPrice }) {
                     if (p.expiry) strikeAgg[key].expiries.add(p.expiry);
                     strikeAgg[key].tradeIds.add(tr.trade_id || tr.instrument_name + tr.timestamp);
                   });
+
+                  // Pre-compute direction clustering (nearby strikes, same type + direction)
+                  // Groups trades within ~15% of each other into "corridors"
+                  const directionClusters = {};
+                  savedTrades.forEach(tr => {
+                    const p = parseInstrument(tr.instrument_name);
+                    if (!p) return;
+                    const clusterKey = `${p.type}_${tr.direction}`;
+                    if (!directionClusters[clusterKey]) directionClusters[clusterKey] = [];
+                    directionClusters[clusterKey].push({
+                      strike: p.strike, notional: tr.notionalUsd || 0,
+                      trade_id: tr.trade_id,
+                    });
+                  });
+                  // Build corridor map: for each trade, find if it belongs to a multi-strike cluster
+                  const corridorMap = {};
+                  Object.entries(directionClusters).forEach(([key, trades]) => {
+                    if (trades.length < 3) return; // need 3+ trades to form a corridor
+                    const strikes = [...new Set(trades.map(t => t.strike))].sort((a, b) => a - b);
+                    if (strikes.length < 2) return; // need at least 2 distinct strikes
+                    // Check if strikes are within ~15% range of the median
+                    const median = strikes[Math.floor(strikes.length / 2)];
+                    const inRange = strikes.filter(s => Math.abs(s - median) / median <= 0.15);
+                    if (inRange.length < 2) return;
+                    const corridorTrades = trades.filter(t => inRange.includes(t.strike));
+                    const totalNotional = corridorTrades.reduce((s, t) => s + t.notional, 0);
+                    if (totalNotional < 5e6) return; // Only flag corridors with $5M+ total
+                    const corridorInfo = {
+                      lowStrike: Math.min(...inRange),
+                      highStrike: Math.max(...inRange),
+                      strikeCount: inRange.length,
+                      totalNotional,
+                      tradeCount: corridorTrades.length,
+                    };
+                    corridorTrades.forEach(t => {
+                      corridorMap[t.trade_id] = corridorInfo;
+                    });
+                  });
+
                   return sortedTrades.map((t, i) => {
                     const parsed = parseInstrument(t.instrument_name);
                     if (!parsed) return null;
@@ -1143,6 +1182,38 @@ function SavedTradesPanel({ btcPrice }) {
                       } else {
                         // Under $10M — just add a footnote
                         strikeContext = ` 📊 ${agg.count} ${typeLabel} trades totaling ${totalStr} at $${parsed.strike.toLocaleString()}${expiryNote}.`;
+                      }
+                    }
+
+                    // Direction corridor context
+                    let corridorContext = "";
+                    const corridor = corridorMap[t.trade_id];
+                    if (corridor && corridor.strikeCount >= 2) {
+                      const totalStr = corridor.totalNotional >= 1e6
+                        ? `$${(corridor.totalNotional / 1e6).toFixed(1)}M`
+                        : `$${(corridor.totalNotional / 1e3).toFixed(0)}K`;
+                      const typeLabel = isPut ? "put" : "call";
+                      const actionLabel = isPut
+                        ? (isBuy ? "downside protection" : "put selling")
+                        : (isBuy ? "upside positioning" : "call overwriting");
+                      corridorContext = `🔗 ${totalStr} ${typeLabel} corridor from $${corridor.lowStrike.toLocaleString()}–$${corridor.highStrike.toLocaleString()} (${corridor.strikeCount} strikes, ${corridor.tradeCount} trades) — layered ${actionLabel}.`;
+                    }
+
+                    // Expired outcome
+                    let expiredOutcome = "";
+                    const tradeDTE = getDTE(t);
+                    if (tradeDTE !== null && tradeDTE <= 0) {
+                      const expiredITM = isPut
+                        ? btcPrice < parsed.strike
+                        : btcPrice > parsed.strike;
+                      if (expiredITM) {
+                        expiredOutcome = isPut
+                          ? `💀 EXPIRED ITM — spot ($${btcPrice.toLocaleString()}) below strike. Position printed.`
+                          : `💰 EXPIRED ITM — spot ($${btcPrice.toLocaleString()}) above strike. Position printed.`;
+                      } else {
+                        expiredOutcome = isPut
+                          ? `📋 EXPIRED OTM — spot held above $${parsed.strike.toLocaleString()}. Hedge cost absorbed.`
+                          : `📋 EXPIRED OTM — spot stayed below $${parsed.strike.toLocaleString()}. Premium lost.`;
                       }
                     }
                     const notional = t.notionalUsd || t.amount * spotAtTime;
@@ -1225,6 +1296,16 @@ function SavedTradesPanel({ btcPrice }) {
                           {strikeContext && (
                             <span style={{ display: "block", marginTop: 4, color: C.accent, fontSize: 10, fontWeight: 600 }}>
                               {strikeContext}
+                            </span>
+                          )}
+                          {corridorContext && (
+                            <span style={{ display: "block", marginTop: 4, color: C.purple, fontSize: 10, fontWeight: 600 }}>
+                              {corridorContext}
+                            </span>
+                          )}
+                          {expiredOutcome && (
+                            <span style={{ display: "block", marginTop: 4, color: C.textMuted, fontSize: 10, fontWeight: 600, fontStyle: "italic" }}>
+                              {expiredOutcome}
                             </span>
                           )}
                           {(() => {
