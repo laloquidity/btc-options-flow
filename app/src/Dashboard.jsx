@@ -1605,7 +1605,7 @@ export default function BTCFlowDashboard() {
             borderRadius: 4,
             letterSpacing: 0.8,
           }}>
-            OPTIONS · ON-CHAIN · WHALE
+            DERIBIT OPTIONS TERMINAL
           </div>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 20 }}>
