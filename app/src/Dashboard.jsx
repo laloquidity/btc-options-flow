@@ -1047,7 +1047,7 @@ function SavedTradesPanel({ btcPrice }) {
                         }}>{isPut ? "PUTS" : "CALLS"}</span>
                         <span style={{ color: C.text }}>at ${c.strike.toLocaleString()}</span>
                         <span style={{ color: C.textMuted, fontSize: 10 }}>
-                          ({c.count} trades{c.expiries.size === 1 ? `, exp ${[...c.expiries][0]}` : c.expiries.size === 2 ? `, exp ${[...c.expiries].join(", ")}` : `, ${c.expiries.size} expiries`})
+                          ({c.count} trades, exp {[...c.expiries].join(", ")})
                         </span>
                       </div>
                     );
