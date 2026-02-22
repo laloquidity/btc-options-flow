@@ -1004,8 +1004,19 @@ function SavedTradesPanel({ btcPrice }) {
               const dte = getDTE(t);
               const n = t.notionalUsd || 0;
               return dte !== null && dte > 0 && dte <= 7 && n >= MAJOR_THRESHOLD_USD;
-            });
+            }).sort((a, b) => (b.notionalUsd || 0) - (a.notionalUsd || 0));
+
             if (expiringSoon.length === 0) return null;
+
+            const massiveTrades = expiringSoon.filter(t => (t.notionalUsd || 0) >= MASSIVE_THRESHOLD_USD);
+            const majorTrades = expiringSoon.filter(t => {
+              const n = t.notionalUsd || 0;
+              return n >= MAJOR_THRESHOLD_USD && n < MASSIVE_THRESHOLD_USD;
+            });
+            const majorTotal = majorTrades.reduce((s, t) => s + (t.notionalUsd || 0), 0);
+            const majorPuts = majorTrades.filter(t => { const p = parseInstrument(t.instrument_name); return p?.type === "P"; }).length;
+            const majorCalls = majorTrades.length - majorPuts;
+
             return (
               <div style={{
                 margin: "8px 12px", padding: "12px 16px",
@@ -1019,7 +1030,8 @@ function SavedTradesPanel({ btcPrice }) {
                 }}>
                   🔥 Expiring This Week — {expiringSoon.length} active whale {expiringSoon.length === 1 ? "bet" : "bets"}
                 </div>
-                {expiringSoon.map((t, i) => {
+                {/* MASSIVE trades shown individually */}
+                {massiveTrades.map((t, i) => {
                   const p = parseInstrument(t.instrument_name);
                   const dte = getDTE(t);
                   const n = t.notionalUsd || 0;
@@ -1027,7 +1039,6 @@ function SavedTradesPanel({ btcPrice }) {
                   const spotMove = btcPrice && t.btcPriceAtSave
                     ? ((btcPrice - t.btcPriceAtSave) / t.btcPriceAtSave * 100).toFixed(1)
                     : null;
-                  // Is the move favorable for this position?
                   const isBuy = t.direction === "buy";
                   const favorable = isPut
                     ? (isBuy ? parseFloat(spotMove) < 0 : parseFloat(spotMove) > 0)
@@ -1059,8 +1070,11 @@ function SavedTradesPanel({ btcPrice }) {
                       <span style={{ color: C.text, fontWeight: 600 }}>
                         {t.amount.toFixed(1)} BTC
                       </span>
-                      <span style={{ color: n >= MASSIVE_THRESHOLD_USD ? C.gold : C.orange, fontWeight: 700 }}>
+                      <span style={{ color: C.gold, fontWeight: 700 }}>
                         ${n >= 1e6 ? (n / 1e6).toFixed(2) + "M" : (n / 1e3).toFixed(0) + "K"}
+                      </span>
+                      <span style={{ color: C.gold, fontSize: 9, fontWeight: 700, padding: "2px 6px", background: C.goldDim, borderRadius: 3, border: `1px solid ${C.goldBorder}` }}>
+                        🔱 MASSIVE
                       </span>
                       {spotMove && (
                         <span style={{ color: favorable ? C.green : C.red, fontSize: 10, fontWeight: 600 }}>
@@ -1070,6 +1084,31 @@ function SavedTradesPanel({ btcPrice }) {
                     </div>
                   );
                 })}
+                {/* MAJOR trades aggregated into summary */}
+                {majorTrades.length > 0 && (
+                  <div style={{
+                    padding: "8px 0", fontSize: 11,
+                    borderTop: massiveTrades.length > 0 ? `1px solid ${C.border}44` : "none",
+                    fontFamily: "'JetBrains Mono', monospace",
+                    color: C.textDim,
+                    display: "flex", flexWrap: "wrap", gap: "6px 10px", alignItems: "center",
+                  }}>
+                    <span style={{ color: C.orange, fontWeight: 700 }}>
+                      + {majorTrades.length} MAJOR {majorTrades.length === 1 ? "trade" : "trades"}
+                    </span>
+                    <span style={{ color: C.orange, fontWeight: 600, fontSize: 11 }}>
+                      ${majorTotal >= 1e6 ? (majorTotal / 1e6).toFixed(1) + "M" : (majorTotal / 1e3).toFixed(0) + "K"} total
+                    </span>
+                    {(majorPuts > 0 || majorCalls > 0) && (
+                      <span style={{ color: C.textMuted, fontSize: 10 }}>
+                        ({majorPuts > 0 ? `${majorPuts}P` : ""}{majorPuts > 0 && majorCalls > 0 ? " / " : ""}{majorCalls > 0 ? `${majorCalls}C` : ""})
+                      </span>
+                    )}
+                    <span style={{ color: C.textMuted, fontSize: 10 }}>
+                      expiring ≤7d
+                    </span>
+                  </div>
+                )}
               </div>
             );
           })()}
