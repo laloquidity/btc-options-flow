@@ -858,6 +858,13 @@ function SavedTradesPanel({ btcPrice }) {
   const massiveCount = savedTrades.filter((t) => (t.notionalUsd || 0) >= MASSIVE_THRESHOLD_USD).length;
   const totalNotional = savedTrades.reduce((sum, t) => sum + (t.notionalUsd || 0), 0);
 
+  // Helper: get DTE for a trade
+  const getDTE = (trade) => {
+    const p = parseInstrument(trade.instrument_name);
+    if (!p) return null;
+    return parseDTE(p.expiry);
+  };
+
   // Sort based on selected mode
   const sortedTrades = [...savedTrades].sort((a, b) => {
     const aN = a.notionalUsd || 0;
@@ -871,24 +878,34 @@ function SavedTradesPanel({ btcPrice }) {
     if (sortMode === "recent") {
       return bT - aT;
     }
-    // Weighted: tier-first, then recency within tier
-    // MASSIVE ($10M+) always on top with 48hr sticky, then MAJOR, then rest
-    // Within the same tier, most recent trade wins
+    // Weighted: expiry-aware sorting
+    // Priority: (1) Active trades over expired, (2) Tier, (3) DTE urgency, (4) Recency
+    const aDTE = getDTE(a);
+    const bDTE = getDTE(b);
+    const aExpired = aDTE !== null && aDTE <= 0;
+    const bExpired = bDTE !== null && bDTE <= 0;
+
+    // Expired trades always sort below active ones
+    if (aExpired !== bExpired) return aExpired ? 1 : -1;
+
+    // Tier assignment
     const aTier = aN >= MASSIVE_THRESHOLD_USD ? 3 : aN >= MAJOR_THRESHOLD_USD ? 2 : aN >= 500_000 ? 1 : 0;
     const bTier = bN >= MASSIVE_THRESHOLD_USD ? 3 : bN >= MAJOR_THRESHOLD_USD ? 2 : bN >= 500_000 ? 1 : 0;
-    if (aTier !== bTier) {
-      // MASSIVE trades get 48hr before they drop tier — still sort above even if old
-      if (aTier === 3 || bTier === 3) {
-        const now = Date.now();
-        const massiveSticky = 48 * 3600 * 1000;
-        const aEffective = aTier === 3 && (now - aT) < massiveSticky ? 3 : aTier === 3 ? 2 : aTier;
-        const bEffective = bTier === 3 && (now - bT) < massiveSticky ? 3 : bTier === 3 ? 2 : bTier;
-        if (aEffective !== bEffective) return bEffective - aEffective;
-        return bT - aT; // same effective tier → most recent first
-      }
-      return bTier - aTier;
+
+    // Different tiers → higher tier wins
+    if (aTier !== bTier) return bTier - aTier;
+
+    // Same tier — if both active, boost near-term (lower DTE = more urgent)
+    if (!aExpired && !bExpired && aDTE !== null && bDTE !== null) {
+      // Near-term (≤7 DTE) trades get priority within same tier
+      const aNearTerm = aDTE <= 7 ? 1 : 0;
+      const bNearTerm = bDTE <= 7 ? 1 : 0;
+      if (aNearTerm !== bNearTerm) return bNearTerm - aNearTerm;
+      // Both near-term or both not → most urgent (lowest DTE) first
+      if (aDTE !== bDTE) return aDTE - bDTE;
     }
-    // Same tier: most recent first
+
+    // Final tiebreaker: most recent first
     return bT - aT;
   });
 
@@ -981,6 +998,81 @@ function SavedTradesPanel({ btcPrice }) {
       {/* Expanded table */}
       {expanded && (
         <>
+          {/* 🔥 EXPIRING SOON — pinned alert for near-term whale bets */}
+          {(() => {
+            const expiringSoon = sortedTrades.filter(t => {
+              const dte = getDTE(t);
+              const n = t.notionalUsd || 0;
+              return dte !== null && dte > 0 && dte <= 7 && n >= MAJOR_THRESHOLD_USD;
+            });
+            if (expiringSoon.length === 0) return null;
+            return (
+              <div style={{
+                margin: "8px 12px", padding: "12px 16px",
+                background: `linear-gradient(135deg, ${C.red}12, ${C.gold}08)`,
+                border: `1px solid ${C.red}44`, borderRadius: 6,
+              }}>
+                <div style={{
+                  fontSize: 10, fontWeight: 700, color: C.red, textTransform: "uppercase",
+                  letterSpacing: 1.2, marginBottom: 8,
+                  fontFamily: "'JetBrains Mono', monospace",
+                }}>
+                  🔥 Expiring This Week — {expiringSoon.length} active whale {expiringSoon.length === 1 ? "bet" : "bets"}
+                </div>
+                {expiringSoon.map((t, i) => {
+                  const p = parseInstrument(t.instrument_name);
+                  const dte = getDTE(t);
+                  const n = t.notionalUsd || 0;
+                  const isPut = p?.type === "P";
+                  const spotMove = btcPrice && t.btcPriceAtSave
+                    ? ((btcPrice - t.btcPriceAtSave) / t.btcPriceAtSave * 100).toFixed(1)
+                    : null;
+                  // Is the move favorable for this position?
+                  const isBuy = t.direction === "buy";
+                  const favorable = isPut
+                    ? (isBuy ? parseFloat(spotMove) < 0 : parseFloat(spotMove) > 0)
+                    : (isBuy ? parseFloat(spotMove) > 0 : parseFloat(spotMove) < 0);
+                  return (
+                    <div key={t.trade_id || i} style={{
+                      display: "flex", flexWrap: "wrap", alignItems: "center", gap: "6px 12px",
+                      padding: "8px 0", fontSize: 12,
+                      borderTop: i > 0 ? `1px solid ${C.border}44` : "none",
+                      fontFamily: "'JetBrains Mono', monospace",
+                    }}>
+                      <span style={{
+                        color: "#fff", background: C.red, padding: "2px 8px", borderRadius: 3,
+                        fontWeight: 700, fontSize: 10,
+                      }}>
+                        {dte}d left
+                      </span>
+                      <span style={{
+                        color: isPut ? C.red : C.green, fontWeight: 700,
+                        padding: "2px 6px", borderRadius: 3,
+                        background: isPut ? C.redDim : C.greenDim,
+                        fontSize: 11,
+                      }}>
+                        {isPut ? "PUT" : "CALL"}
+                      </span>
+                      <span style={{ color: C.text, fontWeight: 600 }}>
+                        ${p?.strike.toLocaleString()}
+                      </span>
+                      <span style={{ color: C.text, fontWeight: 600 }}>
+                        {t.amount.toFixed(1)} BTC
+                      </span>
+                      <span style={{ color: n >= MASSIVE_THRESHOLD_USD ? C.gold : C.orange, fontWeight: 700 }}>
+                        ${n >= 1e6 ? (n / 1e6).toFixed(2) + "M" : (n / 1e3).toFixed(0) + "K"}
+                      </span>
+                      {spotMove && (
+                        <span style={{ color: favorable ? C.green : C.red, fontSize: 10, fontWeight: 600 }}>
+                          Spot {parseFloat(spotMove) > 0 ? "+" : ""}{spotMove}% since entry {favorable ? "✓" : "✗"}
+                        </span>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          })()}
           <div className="whale-header" style={{
             display: "grid",
             gridTemplateColumns: "130px 52px 50px 85px 65px 72px 72px 90px 75px minmax(200px, 1fr)",
@@ -1135,6 +1227,31 @@ function SavedTradesPanel({ btcPrice }) {
                               {strikeContext}
                             </span>
                           )}
+                          {(() => {
+                            const dte = getDTE(t);
+                            const spotMove = btcPrice && t.btcPriceAtSave
+                              ? ((btcPrice - t.btcPriceAtSave) / t.btcPriceAtSave * 100).toFixed(1)
+                              : null;
+                            const favorable = isPut
+                              ? (isBuy ? parseFloat(spotMove) < 0 : parseFloat(spotMove) > 0)
+                              : (isBuy ? parseFloat(spotMove) > 0 : parseFloat(spotMove) < 0);
+                            const expired = dte !== null && dte <= 0;
+                            if (!spotMove && dte === null) return null;
+                            return (
+                              <span style={{ display: "block", marginTop: 4, fontSize: 10, fontWeight: 600, color: C.textMuted }}>
+                                {spotMove && (
+                                  <span style={{ color: favorable ? C.green : C.red, marginRight: 12 }}>
+                                    📈 Spot {parseFloat(spotMove) > 0 ? "+" : ""}{spotMove}% since entry {favorable ? "✓" : "✗"}
+                                  </span>
+                                )}
+                                {dte !== null && (
+                                  <span style={{ color: expired ? C.red + "88" : dte <= 7 ? C.red : C.textMuted }}>
+                                    {expired ? "⏰ Expired" : `⏱ ${dte}d to expiry`}
+                                  </span>
+                                )}
+                              </span>
+                            );
+                          })()}
                         </span>
                       </div>
                     );
