@@ -982,6 +982,9 @@ function SavedTradesPanel({ btcPrice }) {
                   }}>
                     exp {p?.expiry || `${dte}d`}
                   </span>
+                  <span style={{ color: C.textMuted, fontSize: 9 }}>
+                    entered {t.timestamp ? new Date(t.timestamp).toLocaleDateString("en-US", { month: "short", day: "numeric" }) + " " + new Date(t.timestamp).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" }) : "—"}
+                  </span>
                   <span style={{
                     color: isPut ? C.red : C.green, fontWeight: 700,
                     padding: "2px 6px", borderRadius: 3,
