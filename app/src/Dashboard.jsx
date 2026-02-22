@@ -1562,8 +1562,6 @@ export default function BTCFlowDashboard() {
     return true;
   });
 
-  const largeTrades = trades.filter((t) => t.amount >= 5).length;
-  const whaleTrades = trades.filter((t) => t.amount >= 50).length;
 
   return (
     <div style={{
@@ -1646,13 +1644,7 @@ export default function BTCFlowDashboard() {
             color={callVol > 0 && putVol / callVol > 1.5 ? C.red : callVol > 0 && putVol / callVol < 0.7 ? C.green : C.yellow}
             sub={`${putVol.toFixed(0)} P / ${callVol.toFixed(0)} C`}
           />
-          <StatCard
-            icon="📡"
-            label="Trades Tracked (4h)"
-            value={trades.length}
-            color={C.accent}
-            sub={`${largeTrades} notable · ${whaleTrades} whale`}
-          />
+
           <StatCard
             icon="🔴"
             label="Put Volume (1h)"
