@@ -1084,31 +1084,76 @@ function SavedTradesPanel({ btcPrice }) {
                     </div>
                   );
                 })}
-                {/* MAJOR trades aggregated into summary */}
-                {majorTrades.length > 0 && (
-                  <div style={{
-                    padding: "8px 0", fontSize: 11,
-                    borderTop: massiveTrades.length > 0 ? `1px solid ${C.border}44` : "none",
-                    fontFamily: "'JetBrains Mono', monospace",
-                    color: C.textDim,
-                    display: "flex", flexWrap: "wrap", gap: "6px 10px", alignItems: "center",
-                  }}>
-                    <span style={{ color: C.orange, fontWeight: 700 }}>
-                      + {majorTrades.length} MAJOR {majorTrades.length === 1 ? "trade" : "trades"}
-                    </span>
-                    <span style={{ color: C.orange, fontWeight: 600, fontSize: 11 }}>
-                      ${majorTotal >= 1e6 ? (majorTotal / 1e6).toFixed(1) + "M" : (majorTotal / 1e3).toFixed(0) + "K"} total
-                    </span>
-                    {(majorPuts > 0 || majorCalls > 0) && (
-                      <span style={{ color: C.textMuted, fontSize: 10 }}>
-                        ({majorPuts > 0 ? `${majorPuts}P` : ""}{majorPuts > 0 && majorCalls > 0 ? " / " : ""}{majorCalls > 0 ? `${majorCalls}C` : ""})
-                      </span>
-                    )}
-                    <span style={{ color: C.textMuted, fontSize: 10 }}>
-                      expiring ≤7d
-                    </span>
-                  </div>
-                )}
+                {/* MAJOR trades: show strike-level concentrations */}
+                {majorTrades.length > 0 && (() => {
+                  // Group by strike + type
+                  const clusters = {};
+                  majorTrades.forEach(t => {
+                    const p = parseInstrument(t.instrument_name);
+                    if (!p) return;
+                    const key = `${p.strike}_${p.type}`;
+                    if (!clusters[key]) clusters[key] = { strike: p.strike, type: p.type, total: 0, count: 0, minDTE: Infinity };
+                    clusters[key].total += (t.notionalUsd || 0);
+                    clusters[key].count++;
+                    const dte = getDTE(t);
+                    if (dte !== null && dte < clusters[key].minDTE) clusters[key].minDTE = dte;
+                  });
+                  // Show clusters with $5M+ total, sorted largest first
+                  const significant = Object.values(clusters)
+                    .filter(c => c.total >= 5e6)
+                    .sort((a, b) => b.total - a.total);
+                  // Remaining trades not in significant clusters
+                  const significantKeys = new Set(significant.map(c => `${c.strike}_${c.type}`));
+                  const remaining = majorTrades.filter(t => {
+                    const p = parseInstrument(t.instrument_name);
+                    return p && !significantKeys.has(`${p.strike}_${p.type}`);
+                  });
+                  const remainingTotal = remaining.reduce((s, t) => s + (t.notionalUsd || 0), 0);
+
+                  return (
+                    <div style={{
+                      borderTop: massiveTrades.length > 0 ? `1px solid ${C.border}44` : "none",
+                      paddingTop: 6,
+                    }}>
+                      {significant.map((c, i) => {
+                        const isPut = c.type === "P";
+                        const totalStr = c.total >= 1e6 ? `$${(c.total / 1e6).toFixed(1)}M` : `$${(c.total / 1e3).toFixed(0)}K`;
+                        return (
+                          <div key={i} style={{
+                            display: "flex", flexWrap: "wrap", alignItems: "center", gap: "4px 10px",
+                            padding: "4px 0", fontSize: 11,
+                            fontFamily: "'JetBrains Mono', monospace",
+                          }}>
+                            <span style={{ color: C.orange, fontWeight: 700, fontSize: 10 }}>📊</span>
+                            <span style={{ color: C.orange, fontWeight: 700 }}>{totalStr}</span>
+                            <span style={{ color: C.textDim }}>in</span>
+                            <span style={{
+                              color: isPut ? C.red : C.green, fontWeight: 700,
+                              padding: "1px 5px", borderRadius: 3,
+                              background: isPut ? C.redDim : C.greenDim,
+                              fontSize: 10,
+                            }}>{isPut ? "PUTS" : "CALLS"}</span>
+                            <span style={{ color: C.text }}>at ${c.strike.toLocaleString()}</span>
+                            <span style={{ color: C.textMuted, fontSize: 10 }}>
+                              ({c.count} trades, ≤{c.minDTE}d)
+                            </span>
+                          </div>
+                        );
+                      })}
+                      {remaining.length > 0 && (
+                        <div style={{
+                          padding: "4px 0", fontSize: 10,
+                          fontFamily: "'JetBrains Mono', monospace",
+                          color: C.textMuted,
+                        }}>
+                          + {remaining.length} more {remaining.length === 1 ? "trade" : "trades"}
+                          {remainingTotal > 0 && ` (${remainingTotal >= 1e6 ? "$" + (remainingTotal / 1e6).toFixed(1) + "M" : "$" + (remainingTotal / 1e3).toFixed(0) + "K"})`}
+                          {" "}expiring ≤7d
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
               </div>
             );
           })()}
