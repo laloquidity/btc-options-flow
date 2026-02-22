@@ -268,9 +268,9 @@ function interpretTrade(type, strike, direction, amount, btcPrice, expiry) {
   } else if (isPut && !isBuy) {
     // PUT SELL
     if (moneyness === "deep_otm" || moneyness === "far_otm") {
-      main = `Selling far OTM puts at ${sk} (${absDist.toFixed(0)}% below spot). Collecting premium on a crash-level strike — willing to buy BTC at ${sk} if assigned. ${amount >= 25 ? "At this size, a confident structural bull or systematic premium seller." : "Bullish lean — betting this level won't be reached."}`;
+      main = `Selling far OTM puts at ${sk} (${absDist.toFixed(0)}% below spot). Pure premium collection — harvesting theta on a strike that requires a major crash to reach. ${amount >= 25 ? "At this size, systematic premium selling or yield generation. Not a directional bet — this is an income strategy." : "Low-probability assignment; collecting premium on a crash-level strike."}`;
     } else if (moneyness === "otm") {
-      main = `Put sell at ${sk}, ${absDist.toFixed(0)}% below spot. Premium harvesting — getting paid to agree to buy BTC at ${sk}. ${dteTag === "weekly" || dteTag === "expiring" ? "Near expiry makes rapid theta decay favorable for the seller." : `Bullish-neutral view: profits as long as BTC stays above ${sk}.`}`;
+      main = `Put sell at ${sk}, ${absDist.toFixed(0)}% below spot. Premium harvesting — paid to agree to buy BTC at ${sk} if it drops. ${dteTag === "weekly" || dteTag === "expiring" ? "Near expiry makes rapid theta decay favorable for the seller. Income trade, not directional." : `Mildly bullish-neutral: profits as long as BTC stays above ${sk}.`}`;
     } else if (moneyness === "atm") {
       main = `Selling ATM puts at ${sk} — maximum premium collection near the money. This is a vol-selling strategy, bullish-neutral view. ${amount >= 50 ? "Institutional vol sale — likely running a systematic short-vol book or cash-secured put strategy." : "Expects BTC to hold current levels or move higher."}`;
     } else {
