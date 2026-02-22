@@ -1054,7 +1054,7 @@ function SavedTradesPanel({ btcPrice }) {
                         color: "#fff", background: C.red, padding: "2px 8px", borderRadius: 3,
                         fontWeight: 700, fontSize: 10,
                       }}>
-                        {dte}d left
+                        exp {p?.expiry || `${dte}d`}
                       </span>
                       <span style={{
                         color: isPut ? C.red : C.green, fontWeight: 700,
@@ -1092,9 +1092,10 @@ function SavedTradesPanel({ btcPrice }) {
                     const p = parseInstrument(t.instrument_name);
                     if (!p) return;
                     const key = `${p.strike}_${p.type}`;
-                    if (!clusters[key]) clusters[key] = { strike: p.strike, type: p.type, total: 0, count: 0, minDTE: Infinity };
+                    if (!clusters[key]) clusters[key] = { strike: p.strike, type: p.type, total: 0, count: 0, minDTE: Infinity, expiries: new Set() };
                     clusters[key].total += (t.notionalUsd || 0);
                     clusters[key].count++;
+                    if (p.expiry) clusters[key].expiries.add(p.expiry);
                     const dte = getDTE(t);
                     if (dte !== null && dte < clusters[key].minDTE) clusters[key].minDTE = dte;
                   });
@@ -1135,7 +1136,7 @@ function SavedTradesPanel({ btcPrice }) {
                             }}>{isPut ? "PUTS" : "CALLS"}</span>
                             <span style={{ color: C.text }}>at ${c.strike.toLocaleString()}</span>
                             <span style={{ color: C.textMuted, fontSize: 10 }}>
-                              ({c.count} trades, ≤{c.minDTE}d)
+                              ({c.count} trades{c.expiries.size === 1 ? `, exp ${[...c.expiries][0]}` : `, ${c.expiries.size} expiries`})
                             </span>
                           </div>
                         );
