@@ -1613,7 +1613,21 @@ export default function BTCFlowDashboard() {
       fetchData();
       setRefreshCount((c) => c + 1);
     }, 15000);
-    return () => clearInterval(intervalRef.current);
+
+    // Browsers throttle setInterval in background tabs — re-fetch immediately
+    // when the user returns to the tab so the feed is never stale
+    const handleVisibility = () => {
+      if (document.visibilityState === "visible") {
+        fetchData();
+        setRefreshCount((c) => c + 1);
+      }
+    };
+    document.addEventListener("visibilitychange", handleVisibility);
+
+    return () => {
+      clearInterval(intervalRef.current);
+      document.removeEventListener("visibilitychange", handleVisibility);
+    };
   }, [fetchData]);
 
   const filteredTrades = trades.filter((t) => {
