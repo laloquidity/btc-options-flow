@@ -157,15 +157,18 @@ async function fetchBTCPrice() {
 }
 
 async function fetchOptionsTrades(hoursAgo = 4) {
-  const startTimestamp = Date.now() - (hoursAgo * 3600 * 1000);
+  const cutoff = Date.now() - (hoursAgo * 3600 * 1000);
+  // Don't pass start_timestamp — Deribit returns the oldest N trades from that
+  // point, not the newest. Without it, we get the truly latest 1000 trades.
   const result = await fetchDeribit("get_last_trades_by_currency", {
     currency: "BTC",
     kind: "option",
     count: "1000",
     sorting: "desc",
-    start_timestamp: startTimestamp.toString(),
   });
-  return result?.trades || [];
+  const trades = result?.trades || [];
+  // Client-side filter by time window
+  return trades.filter(t => t.timestamp >= cutoff);
 }
 
 async function fetchBookSummary() {
