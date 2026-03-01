@@ -1234,7 +1234,7 @@ function MarketInterpretation({ trades, btcPrice, putVol, callVol, ivMap, atmIV,
   );
 }
 
-function SavedTradesPanel({ btcPrice }) {
+function SavedTradesPanel({ btcPrice, ivMap, ivPercentile }) {
   const [savedTrades, setSavedTrades] = useState(() => loadSavedTrades());
   const [expanded, setExpanded] = useState(true);
   const [sortMode, setSortMode] = useState("weighted"); // "weighted" | "size" | "recent"
@@ -1421,7 +1421,11 @@ function SavedTradesPanel({ btcPrice }) {
                     </span>
                   )}
                   <span style={{ display: "block", width: "100%", color: C.textDim, fontSize: 10, lineHeight: 1.4, marginTop: 4 }}>
-                    {interpretTrade(p?.type, p?.strike, t.direction, t.amount, t.btcPriceAtSave || btcPrice, p?.expiry).detail}
+                    {interpretTrade(p?.type, p?.strike, t.direction, t.amount, t.btcPriceAtSave || btcPrice, p?.expiry, {
+                      markIV: getIVForTrade(t.instrument_name, ivMap)?.markIV,
+                      ivPercentile,
+                      midPrice: getIVForTrade(t.instrument_name, ivMap)?.midPrice,
+                    }).detail}
                   </span>
                   {(() => {
                     const hint = findRelatedLegHint(t, sortedTrades, btcPrice);
@@ -1669,7 +1673,12 @@ function SavedTradesPanel({ btcPrice }) {
                       const isBuy = t.direction === "buy";
                       const spotAtTime = t.btcPriceAtSave || btcPrice;
                       const distPct = spotAtTime > 0 ? ((parsed.strike - spotAtTime) / spotAtTime * 100).toFixed(1) : "—";
-                      const interpObj = interpretTrade(parsed.type, parsed.strike, t.direction, t.amount, spotAtTime, parsed.expiry);
+                      const ivData = getIVForTrade(t.instrument_name, ivMap);
+                      const interpObj = interpretTrade(parsed.type, parsed.strike, t.direction, t.amount, spotAtTime, parsed.expiry, {
+                        markIV: ivData?.markIV,
+                        ivPercentile,
+                        midPrice: ivData?.midPrice,
+                      });
                       const interp = interpObj.detail;
 
                       // Strike-level context
@@ -1812,6 +1821,17 @@ function SavedTradesPanel({ btcPrice }) {
                             border: isHighlighted ? `1px solid ${highlightBorder}` : "none",
                           }}>{tagLabel}</span>
                           <span className="whale-interp" style={{ color: isHighlighted ? C.text : C.textDim, fontSize: 11, lineHeight: 1.5, fontWeight: isHighlighted ? 500 : 400 }}>
+                            <span style={{ display: "block", marginBottom: 4, fontSize: 10 }}>
+                              <span style={{
+                                color: interpObj.sentiment === "bearish" ? C.red : interpObj.sentiment === "bullish" ? C.green : interpObj.sentiment === "vol_trade" ? C.purple : C.textDim,
+                                fontWeight: 600,
+                              }}>{interpObj.summary}</span>
+                              {ivData?.markIV != null && (
+                                <span style={{ marginLeft: 8, fontSize: 9, color: C.cyan, padding: "1px 4px", background: C.cyan + "15", borderRadius: 3, border: `1px solid ${C.cyan}33` }}>
+                                  IV {ivData.markIV.toFixed(0)}%
+                                </span>
+                              )}
+                            </span>
                             {aggInterp || interp}
                             {strikeContext && (
                               <span style={{ display: "block", marginTop: 4, color: C.accent, fontSize: 10, fontWeight: 600 }}>
@@ -2146,7 +2166,7 @@ export default function BTCFlowDashboard() {
         </div>
 
         {/* Saved Whale Trades */}
-        <SavedTradesPanel btcPrice={btcPrice} />
+        <SavedTradesPanel btcPrice={btcPrice} ivMap={ivMap} ivPercentile={ivPercentile} />
 
         {/* Trade Feed */}
         <div style={{ background: C.bgCard, border: `1px solid ${C.border}`, borderRadius: 8, overflow: "hidden" }}>
