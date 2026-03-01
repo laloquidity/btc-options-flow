@@ -179,6 +179,63 @@ async function fetchBookSummary() {
   return result || [];
 }
 
+// Build IV lookup map from book summary data
+function buildIVMap(bookSummary) {
+  const map = {};
+  if (!bookSummary || !Array.isArray(bookSummary)) return map;
+  bookSummary.forEach((item) => {
+    if (item.instrument_name && item.mark_iv != null) {
+      map[item.instrument_name] = {
+        markIV: item.mark_iv,
+        bidIV: item.bid_iv || 0,
+        askIV: item.ask_iv || 0,
+        oi: item.open_interest || 0,
+        midPrice: item.mid_price || 0,
+        markPrice: item.mark_price || 0,
+        underlyingPrice: item.underlying_price || 0,
+      };
+    }
+  });
+  return map;
+}
+
+// Get IV data for a specific trade's instrument
+function getIVForTrade(instrumentName, ivMap) {
+  if (!ivMap || !instrumentName) return null;
+  const exact = ivMap[instrumentName];
+  if (exact) return exact;
+  return null;
+}
+
+// Extract ATM IV from IV map (closest-to-spot strike, nearest liquid expiry)
+function extractATMIV(ivMap, btcPrice) {
+  if (!ivMap || !btcPrice) return null;
+  let bestMatch = null;
+  let bestScore = Infinity;
+  Object.entries(ivMap).forEach(([name, data]) => {
+    const parsed = parseInstrument(name);
+    if (!parsed || data.markIV <= 0 || data.oi < 10) return;
+    const dte = parseDTE(parsed.expiry);
+    if (dte === null || dte <= 0 || dte > 30) return; // focus on near-term
+    const strikeDist = Math.abs(parsed.strike - btcPrice) / btcPrice;
+    if (strikeDist > 0.05) return; // within 5% of spot
+    // Score: prefer closest strike and shortest DTE
+    const score = strikeDist * 100 + dte * 0.1;
+    if (score < bestScore) {
+      bestScore = score;
+      bestMatch = data.markIV;
+    }
+  });
+  return bestMatch;
+}
+
+// Compute percentile of current value within a history array
+function computePercentile(current, history) {
+  if (!history || history.length < 2) return null;
+  const below = history.filter((v) => v < current).length;
+  return Math.round((below / history.length) * 100);
+}
+
 function parseInstrument(name) {
   const parts = name.split("-");
   if (parts.length < 4) return null;
@@ -204,9 +261,10 @@ function parseDTE(expiryStr) {
   return Math.ceil(diffMs / 86400000); // Any remaining time = at least 1 DTE
 }
 
-function interpretTrade(type, strike, direction, amount, btcPrice, expiry) {
-  if (!btcPrice) return "No price data";
+function interpretTrade(type, strike, direction, amount, btcPrice, expiry, opts = {}) {
+  if (!btcPrice) return { summary: "No price data", detail: "No price data", tags: {}, sentiment: "neutral" };
 
+  const { markIV, ivPercentile, premiumBTC, midPrice } = opts;
   const isPut = type === "P";
   const isBuy = direction === "buy";
   const dist = (strike - btcPrice) / btcPrice * 100; // positive = above spot
@@ -232,6 +290,13 @@ function interpretTrade(type, strike, direction, amount, btcPrice, expiry) {
     else moneyness = "deep_otm";
   }
 
+  // ── Moneyness display label ──
+  const moneynessLabels = {
+    deep_itm: "DEEP ITM", itm: "ITM", atm: "ATM",
+    otm: "OTM", far_otm: "FAR OTM", deep_otm: "DEEP OTM",
+  };
+  const moneynessLabel = moneynessLabels[moneyness] || moneyness.toUpperCase();
+
   // ── DTE context ──
   let dteTag = "";
   let dteContext = "";
@@ -250,7 +315,46 @@ function interpretTrade(type, strike, direction, amount, btcPrice, expiry) {
   else if (amount >= 25) sizeQ = "Large positioning";
   else if (amount >= 5) sizeQ = "Meaningful size";
 
-  // ── Build interpretation ──
+  // ── IV context (new) ──
+  let ivTag = "";
+  let ivContext = "";
+  if (markIV != null && markIV > 0) {
+    if (ivPercentile != null) {
+      if (ivPercentile < 20) {
+        ivTag = `IV ${markIV.toFixed(0)}% (${ivPercentile}th)`;
+        ivContext = `IV historically cheap (${ivPercentile}th pctl) — getting good value on premium.`;
+      } else if (ivPercentile > 80) {
+        ivTag = `IV ${markIV.toFixed(0)}% (${ivPercentile}th)`;
+        ivContext = `IV elevated (${ivPercentile}th pctl) — premium is expensive, signals urgency or crowded positioning.`;
+      } else {
+        ivTag = `IV ${markIV.toFixed(0)}% (${ivPercentile}th)`;
+        ivContext = `IV at ${markIV.toFixed(0)}% (${ivPercentile}th pctl).`;
+      }
+    } else {
+      ivTag = `IV ${markIV.toFixed(0)}%`;
+      ivContext = `IV: ${markIV.toFixed(0)}%.`;
+    }
+  }
+
+  // ── Premium context (new) ──
+  let premTag = "";
+  let premContext = "";
+  const effectivePremBTC = premiumBTC || (midPrice ? midPrice * amount : 0);
+  if (effectivePremBTC > 0 && btcPrice > 0) {
+    const premUSD = effectivePremBTC * btcPrice;
+    if (premUSD >= 500_000) {
+      premTag = `$${(premUSD / 1e6).toFixed(1)}M prem`;
+      premContext = `$${(premUSD / 1e6).toFixed(1)}M premium on the line — high-conviction.`;
+    } else if (premUSD >= 50_000) {
+      premTag = `$${(premUSD / 1e3).toFixed(0)}K prem`;
+      premContext = `$${(premUSD / 1e3).toFixed(0)}K premium committed — meaningful capital.`;
+    } else if (premUSD >= 5_000) {
+      premTag = `$${(premUSD / 1e3).toFixed(0)}K prem`;
+      premContext = `~$${(premUSD / 1e3).toFixed(0)}K premium at risk.`;
+    }
+  }
+
+  // ── Build interpretation (full detail) ──
   let main = "";
 
   if (isPut && isBuy) {
@@ -316,7 +420,41 @@ function interpretTrade(type, strike, direction, amount, btcPrice, expiry) {
     main += ` ${sizeQ} (${amount.toFixed(0)} BTC).`;
   }
 
-  return main;
+  // Append IV context
+  if (ivContext) main += ` ${ivContext}`;
+
+  // Append premium context
+  if (premContext) main += ` ${premContext}`;
+
+  // ── Determine sentiment ──
+  let sentiment = "neutral";
+  if (isPut && isBuy) sentiment = "bearish";
+  else if (isPut && !isBuy) sentiment = "bullish";
+  else if (!isPut && isBuy) sentiment = "bullish";
+  else if (!isPut && !isBuy) sentiment = "bearish";
+  // Vol-trade detection: ATM straddle-component or extreme IV context
+  if (moneyness === "atm" && ivPercentile != null && (ivPercentile < 15 || ivPercentile > 85)) {
+    sentiment = "vol_trade";
+  }
+
+  // ── Build compact summary ──
+  const typeLabel = isPut ? "PUT" : "CALL";
+  const dirLabel = isBuy ? "BUY" : "SELL";
+  const distLabel = dist >= 0 ? `+${absDist.toFixed(0)}%` : `-${absDist.toFixed(0)}%`;
+  const shortThesis = moneyness === "atm" ? (isBuy ? "Directional" : "Vol sell")
+    : (moneyness.includes("otm") ? (isBuy ? (isPut ? "Hedge" : "Upside bet") : "Premium harvest")
+      : (isBuy ? "Delta play" : "Closing/unwinding"));
+  const summaryParts = [`${moneynessLabel} ${typeLabel} ${dirLabel}`, distLabel, shortThesis];
+  if (ivTag) summaryParts.push(ivTag);
+  if (premTag) summaryParts.push(premTag);
+  const summary = summaryParts.join(" | ");
+
+  return {
+    summary,
+    detail: main,
+    tags: { moneyness, dteTag, sizeQ, ivTag, premTag, moneynessLabel },
+    sentiment,
+  };
 }
 
 // Check if other saved trades suggest a multi-leg structure
@@ -362,6 +500,128 @@ function findRelatedLegHint(trade, allTrades, btcPrice) {
   }
 
   return `Note: A matching ${r.amount.toFixed(0)} BTC ${typeLabel} ${dirLabel} exists at $${rp.strike.toLocaleString()} (same expiry)${structureHint ? ` — these may be legs of a ${structureHint}` : ""}. Review both positions together for full context.`;
+}
+
+// ============================================================
+// MULTI-LEG STRUCTURE DETECTION (Phase 3)
+// ============================================================
+
+function groupTradesIntoStructures(trades) {
+  if (!trades || trades.length === 0) return [];
+  const used = new Set();
+  const groups = [];
+
+  // Sort by timestamp for efficient pairing
+  const sorted = [...trades].sort((a, b) => a.timestamp - b.timestamp);
+
+  for (let i = 0; i < sorted.length; i++) {
+    if (used.has(sorted[i].trade_id)) continue;
+    const t = sorted[i];
+    const p = parseInstrument(t.instrument_name);
+    if (!p) {
+      groups.push({ type: "single", legs: [t], label: null });
+      used.add(t.trade_id);
+      continue;
+    }
+
+    // Look for matching legs within ±2 seconds
+    const candidates = [];
+    for (let j = i + 1; j < sorted.length; j++) {
+      const t2 = sorted[j];
+      if (used.has(t2.trade_id)) continue;
+      if (Math.abs(t2.timestamp - t.timestamp) > 2000) break; // beyond 2s window
+      const p2 = parseInstrument(t2.instrument_name);
+      if (!p2) continue;
+      // Size within ±20%
+      const sizeRatio = Math.min(t.amount, t2.amount) / Math.max(t.amount, t2.amount);
+      if (sizeRatio < 0.8) continue;
+      // Must be complementary
+      const sameType = p.type === p2.type;
+      const sameDir = t.direction === t2.direction;
+      const sameExpiry = p.expiry === p2.expiry;
+      if (sameType && sameDir && p.strike === p2.strike) continue; // identical, not a structure
+
+      candidates.push({ trade: t2, parsed: p2, sameType, sameDir, sameExpiry });
+    }
+
+    if (candidates.length === 0) {
+      groups.push({ type: "single", legs: [t], label: null });
+      used.add(t.trade_id);
+      continue;
+    }
+
+    // Pick best match
+    const best = candidates[0];
+    const bp = best.parsed;
+    used.add(t.trade_id);
+    used.add(best.trade.trade_id);
+
+    let structType = "single";
+    let label = "";
+    const sk1 = `$${Math.min(p.strike, bp.strike).toLocaleString()}`;
+    const sk2 = `$${Math.max(p.strike, bp.strike).toLocaleString()}`;
+
+    if (best.sameType && !best.sameDir && best.sameExpiry) {
+      // Same type, opposite direction, same expiry = vertical spread
+      const isBullSpread = (p.type === "C" && t.direction === "buy" && p.strike < bp.strike) ||
+        (p.type === "P" && t.direction === "sell" && p.strike < bp.strike);
+      structType = "spread";
+      label = `${isBullSpread ? "BULL" : "BEAR"} ${p.type === "P" ? "PUT" : "CALL"} SPREAD ${sk1}/${sk2}`;
+    } else if (!best.sameType && best.sameDir && best.sameExpiry) {
+      // Different type, same direction, same expiry
+      const strikeDist = Math.abs(p.strike - bp.strike) / Math.max(p.strike, bp.strike);
+      if (strikeDist < 0.02) {
+        structType = "straddle";
+        label = `STRADDLE ${sk1}`;
+      } else {
+        structType = "strangle";
+        label = `STRANGLE ${sk1}/${sk2}`;
+      }
+    } else if (!best.sameType && !best.sameDir && best.sameExpiry) {
+      structType = "risk_reversal";
+      const putLeg = p.type === "P" ? { p, t } : { p: bp, t: best.trade };
+      const callLeg = p.type === "C" ? { p, t } : { p: bp, t: best.trade };
+      label = `RISK REV ${callLeg.t.direction === "buy" ? "Buy" : "Sell"} $${callLeg.p.strike.toLocaleString()}C / ${putLeg.t.direction === "buy" ? "Buy" : "Sell"} $${putLeg.p.strike.toLocaleString()}P`;
+    } else if (best.sameType && best.sameDir && !best.sameExpiry) {
+      structType = "calendar";
+      label = `CALENDAR ${p.type === "P" ? "PUT" : "CALL"} $${p.strike.toLocaleString()} ${p.expiry}/${bp.expiry}`;
+    }
+
+    if (structType !== "single") {
+      groups.push({ type: structType, legs: [t, best.trade], label });
+    } else {
+      groups.push({ type: "single", legs: [t], label: null });
+      groups.push({ type: "single", legs: [best.trade], label: null });
+    }
+  }
+
+  return groups;
+}
+
+function interpretStructure(group) {
+  if (group.type === "single" || !group.legs || group.legs.length < 2) return null;
+  const [l1, l2] = group.legs;
+  const combinedSize = (l1.amount + l2.amount) / 2;
+  const sizeStr = `${combinedSize.toFixed(1)} BTC`;
+
+  switch (group.type) {
+    case "spread": {
+      const isBull = group.label.startsWith("BULL");
+      return `${group.label} — ${sizeStr}. ${isBull
+        ? "Limited-risk directional bet; profits if spot moves above upper strike."
+        : "Limited-risk directional bet; profits if spot drops below lower strike."}`;
+    }
+    case "straddle":
+      return `${group.label} — ${sizeStr}. Betting on a large move in either direction. Not directionally biased — pure vol play.`;
+    case "strangle":
+      return `${group.label} — ${sizeStr}. Similar to straddle but cheaper; profits on a big move in either direction.`;
+    case "risk_reversal":
+      return `${group.label} — ${sizeStr}. Synthetic directional position — strong conviction trade with zero or near-zero net premium.`;
+    case "calendar":
+      return `${group.label} — ${sizeStr}. Term-structure trade — betting on time-decay differential between near and far expiries.`;
+    default:
+      return null;
+  }
 }
 
 // ============================================================
@@ -458,14 +718,19 @@ function SentimentBar({ putVol, callVol }) {
   );
 }
 
-function TradeRow({ trade, btcPrice, index }) {
+function TradeRow({ trade, btcPrice, index, ivMap, ivPercentile, structureLabel, isExpanded, onToggle }) {
   const parsed = parseInstrument(trade.instrument_name);
   if (!parsed) return null;
 
   const isPut = parsed.type === "P";
   const isBuy = trade.direction === "buy";
   const amount = trade.amount;
-  const interp = interpretTrade(parsed.type, parsed.strike, trade.direction, amount, btcPrice, parsed.expiry);
+  const ivData = getIVForTrade(trade.instrument_name, ivMap);
+  const interp = interpretTrade(parsed.type, parsed.strike, trade.direction, amount, btcPrice, parsed.expiry, {
+    markIV: ivData?.markIV,
+    ivPercentile,
+    midPrice: ivData?.midPrice,
+  });
 
   let sizeLabel = "";
   let sizeBg = "transparent";
@@ -475,69 +740,110 @@ function TradeRow({ trade, btcPrice, index }) {
 
   const distPct = btcPrice > 0 ? ((parsed.strike - btcPrice) / btcPrice * 100).toFixed(1) : "—";
   const ts = new Date(trade.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  const ivDisplay = ivData?.markIV ? `${ivData.markIV.toFixed(0)}%` : "—";
+  const sentimentColors = { bearish: C.red, bullish: C.green, neutral: C.textDim, vol_trade: C.purple };
 
   return (
-    <div className="trade-row" style={{
-      display: "grid",
-      gridTemplateColumns: "70px 52px 50px 85px 65px 72px 62px 55px minmax(200px, 1fr)",
-      alignItems: "start",
-      padding: "10px 16px",
-      fontSize: 12,
-      fontFamily: "'JetBrains Mono', monospace",
-      background: index % 2 === 0 ? "transparent" : C.bgCard + "60",
-      borderBottom: `1px solid ${C.border}44`,
-      gap: 8,
-      transition: "background 0.15s",
-      cursor: "default",
-    }}
-      onMouseEnter={(e) => (e.currentTarget.style.background = C.bgCardHover)}
-      onMouseLeave={(e) => (e.currentTarget.style.background = index % 2 === 0 ? "transparent" : C.bgCard + "60")}
-    >
-      <span style={{ color: C.textDim }}>{ts}</span>
-      <span style={{
-        color: isPut ? C.red : C.green,
-        fontWeight: 700,
-        padding: "2px 6px",
-        borderRadius: 3,
-        background: isPut ? C.redDim : C.greenDim,
-        textAlign: "center",
-        fontSize: 11,
-      }}>
-        {isPut ? "PUT" : "CALL"}
-      </span>
-      <span style={{
-        color: isBuy ? C.green : C.red,
-        fontSize: 11,
-        textAlign: "center",
-      }}>
-        {isBuy ? "BUY" : "SELL"}
-      </span>
-      <span style={{ color: C.text, fontWeight: 600 }}>${parsed.strike.toLocaleString()}</span>
-      <span style={{ color: parseFloat(distPct) > 0 ? C.green : parseFloat(distPct) < 0 ? C.red : C.textDim }}>
-        {distPct > 0 ? "+" : ""}{distPct}%
-      </span>
-      <span style={{ color: C.text, fontWeight: 600 }}>{amount.toFixed(1)}</span>
-      <span style={{ color: C.accent, fontSize: 10, padding: "2px 6px", background: C.accent + "15", borderRadius: 3, border: `1px solid ${C.accent}33`, fontWeight: 600 }}>{parsed.expiry}</span>
-      {sizeLabel ? (
+    <div>
+      <div className="trade-row" style={{
+        display: "grid",
+        gridTemplateColumns: "70px 52px 50px 85px 55px 72px 62px 45px 50px minmax(180px, 1fr)",
+        alignItems: "center",
+        padding: "10px 16px",
+        fontSize: 12,
+        fontFamily: "'JetBrains Mono', monospace",
+        background: isExpanded ? C.bgCardHover : (index % 2 === 0 ? "transparent" : C.bgCard + "60"),
+        borderBottom: `1px solid ${C.border}44`,
+        gap: 8,
+        transition: "background 0.15s",
+        cursor: "pointer",
+      }}
+        onClick={onToggle}
+        onMouseEnter={(e) => (e.currentTarget.style.background = C.bgCardHover)}
+        onMouseLeave={(e) => (e.currentTarget.style.background = isExpanded ? C.bgCardHover : (index % 2 === 0 ? "transparent" : C.bgCard + "60"))}
+      >
+        <span style={{ color: C.textDim }}>{ts}</span>
         <span style={{
-          fontSize: 9,
+          color: isPut ? C.red : C.green,
           fontWeight: 700,
-          color: sizeLabel === "WHALE" ? C.purple : sizeLabel === "LARGE" ? C.accent : C.textDim,
-          background: sizeBg,
           padding: "2px 6px",
           borderRadius: 3,
+          background: isPut ? C.redDim : C.greenDim,
           textAlign: "center",
-          letterSpacing: 0.8,
-        }}>{sizeLabel}</span>
-      ) : <span />}
-      <span className="trade-interp" style={{ color: C.textDim, fontSize: 11, lineHeight: 1.5 }}>
-        {interp}
-      </span>
+          fontSize: 11,
+        }}>
+          {isPut ? "PUT" : "CALL"}
+        </span>
+        <span style={{
+          color: isBuy ? C.green : C.red,
+          fontSize: 11,
+          textAlign: "center",
+        }}>
+          {isBuy ? "BUY" : "SELL"}
+        </span>
+        <span style={{ color: C.text, fontWeight: 600 }}>${parsed.strike.toLocaleString()}</span>
+        <span style={{ color: parseFloat(distPct) > 0 ? C.green : parseFloat(distPct) < 0 ? C.red : C.textDim }}>
+          {distPct > 0 ? "+" : ""}{distPct}%
+        </span>
+        <span style={{ color: C.text, fontWeight: 600 }}>{amount.toFixed(1)}</span>
+        <span style={{ color: C.accent, fontSize: 10, padding: "2px 6px", background: C.accent + "15", borderRadius: 3, border: `1px solid ${C.accent}33`, fontWeight: 600 }}>{parsed.expiry}</span>
+        <span style={{ color: ivData?.markIV ? C.cyan : C.textMuted, fontSize: 10 }}>{ivDisplay}</span>
+        {sizeLabel ? (
+          <span style={{
+            fontSize: 9,
+            fontWeight: 700,
+            color: sizeLabel === "WHALE" ? C.purple : sizeLabel === "LARGE" ? C.accent : C.textDim,
+            background: sizeBg,
+            padding: "2px 6px",
+            borderRadius: 3,
+            textAlign: "center",
+            letterSpacing: 0.8,
+          }}>{sizeLabel}</span>
+        ) : <span />}
+        <span className="trade-interp" style={{ color: C.textDim, fontSize: 11, lineHeight: 1.5, display: "flex", alignItems: "center", gap: 6 }}>
+          {structureLabel && (
+            <span style={{
+              fontSize: 9, fontWeight: 700, color: C.purple,
+              padding: "2px 5px", borderRadius: 3,
+              background: C.purpleDim, border: `1px solid ${C.purple}44`,
+              whiteSpace: "nowrap",
+            }}>{structureLabel}</span>
+          )}
+          <span style={{ color: sentimentColors[interp.sentiment] || C.textDim }}>{interp.summary}</span>
+        </span>
+      </div>
+      {isExpanded && (
+        <div style={{
+          padding: "12px 16px 12px 86px",
+          background: C.bgCard,
+          borderBottom: `1px solid ${C.border}44`,
+          fontSize: 11,
+          lineHeight: 1.6,
+          fontFamily: "'JetBrains Mono', monospace",
+          animation: "fadeIn 0.15s ease-out",
+        }}>
+          <div style={{ color: C.text, marginBottom: 8 }}>{interp.detail}</div>
+          <div style={{ display: "flex", gap: 16, flexWrap: "wrap", color: C.textDim, fontSize: 10 }}>
+            {ivData?.markIV != null && (
+              <span>Mark IV: <span style={{ color: C.cyan }}>{ivData.markIV.toFixed(1)}%</span></span>
+            )}
+            {ivData?.bidIV > 0 && ivData?.askIV > 0 && (
+              <span>Bid/Ask IV: <span style={{ color: C.textDim }}>{ivData.bidIV.toFixed(1)}% / {ivData.askIV.toFixed(1)}%</span></span>
+            )}
+            {ivData?.oi > 0 && (
+              <span>OI: <span style={{ color: C.textDim }}>{ivData.oi.toLocaleString()}</span></span>
+            )}
+            {ivData?.midPrice > 0 && (
+              <span>Mid: <span style={{ color: C.yellow }}>{ivData.midPrice.toFixed(4)} BTC</span> (${(ivData.midPrice * btcPrice).toLocaleString(undefined, { maximumFractionDigits: 0 })})</span>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
-function StrikeHeatmap({ trades, btcPrice, type }) {
+function StrikeHeatmap({ trades, btcPrice, type, ivMap }) {
   const strikeMap = {};
   trades.forEach((t) => {
     const parsed = parseInstrument(t.instrument_name);
@@ -555,8 +861,6 @@ function StrikeHeatmap({ trades, btcPrice, type }) {
 
   const maxVol = Math.max(...sorted.map((s) => s.total), 1);
   const isPut = type === "P";
-  const color = isPut ? C.red : C.green;
-  const dimColor = isPut ? C.redDim : C.greenDim;
 
   return (
     <div style={{ background: C.bgCard, border: `1px solid ${C.border}`, borderRadius: 8, padding: 20 }}>
@@ -568,37 +872,44 @@ function StrikeHeatmap({ trades, btcPrice, type }) {
       ) : (
         sorted.map((s) => {
           const pct = btcPrice > 0 ? ((s.strike - btcPrice) / btcPrice * 100).toFixed(1) : "—";
-          const barWidth = (s.total / maxVol) * 100;
+          const buyWidth = (s.buy / maxVol) * 100;
+          const sellWidth = (s.sell / maxVol) * 100;
+          const net = s.buy - s.sell;
+          const buyDominant = s.buy > s.sell * 1.6;
+          const sellDominant = s.sell > s.buy * 1.6;
+          const netBadge = buyDominant ? "BUY ↑" : sellDominant ? "SELL ↓" : "MIXED";
+          const netColor = buyDominant ? C.green : sellDominant ? C.red : C.yellow;
           return (
-            <div key={s.strike} style={{ marginBottom: 6, display: "flex", alignItems: "center", gap: 10, fontFamily: "'JetBrains Mono', monospace" }}>
+            <div key={s.strike} style={{ marginBottom: 8, display: "flex", alignItems: "center", gap: 8, fontFamily: "'JetBrains Mono', monospace" }}>
               <span style={{ fontSize: 12, color: C.text, fontWeight: 600, minWidth: 75, textAlign: "right" }}>
                 ${s.strike.toLocaleString()}
               </span>
               <span style={{
                 fontSize: 10,
                 color: parseFloat(pct) > 0 ? C.green : parseFloat(pct) < 0 ? C.red : C.textDim,
-                minWidth: 52,
-                textAlign: "right",
+                minWidth: 45, textAlign: "right",
               }}>
                 {pct > 0 ? "+" : ""}{pct}%
               </span>
-              <div style={{ flex: 1, height: 18, background: C.border + "60", borderRadius: 3, overflow: "hidden", position: "relative" }}>
-                <div style={{
-                  width: `${barWidth}%`,
-                  height: "100%",
-                  background: `linear-gradient(90deg, ${dimColor}, ${color}44)`,
-                  borderRadius: 3,
-                  transition: "width 0.4s",
-                }} />
+              <div style={{ flex: 1, height: 18, background: C.border + "60", borderRadius: 3, overflow: "hidden", display: "flex", position: "relative" }}>
+                <div style={{ width: `${buyWidth}%`, height: "100%", background: C.green + "66", transition: "width 0.4s" }} />
+                <div style={{ width: `${sellWidth}%`, height: "100%", background: C.red + "66", transition: "width 0.4s" }} />
                 <span style={{
-                  position: "absolute",
-                  right: 8,
-                  top: "50%",
-                  transform: "translateY(-50%)",
-                  fontSize: 10,
-                  color: C.textDim,
-                }}>{s.total.toFixed(1)} BTC</span>
+                  position: "absolute", right: 6, top: "50%", transform: "translateY(-50%)",
+                  fontSize: 9, color: C.textDim,
+                }}>
+                  {s.buy.toFixed(1)}B / {s.sell.toFixed(1)}S
+                </span>
               </div>
+              <span style={{
+                fontSize: 8, fontWeight: 700, color: netColor,
+                padding: "2px 5px", borderRadius: 3,
+                background: netColor + "18", border: `1px solid ${netColor}44`,
+                minWidth: 50, textAlign: "center", whiteSpace: "nowrap",
+              }}>{netBadge}</span>
+              <span style={{ fontSize: 10, color: net > 0 ? C.green : net < 0 ? C.red : C.textDim, minWidth: 45, textAlign: "right" }}>
+                {net > 0 ? "+" : ""}{net.toFixed(1)}
+              </span>
             </div>
           );
         })
@@ -613,7 +924,7 @@ function ExpiryBreakdown({ trades, btcPrice }) {
     const parsed = parseInstrument(t.instrument_name);
     if (!parsed) return;
     const key = parsed.expiry;
-    if (!expiryMap[key]) expiryMap[key] = { puts: 0, calls: 0, total: 0, putBuy: 0, callBuy: 0 };
+    if (!expiryMap[key]) expiryMap[key] = { puts: 0, calls: 0, total: 0, putBuy: 0, callBuy: 0, expiry: parsed.expiry };
     if (parsed.type === "P") {
       expiryMap[key].puts += t.amount;
       if (t.direction === "buy") expiryMap[key].putBuy += t.amount;
@@ -625,9 +936,37 @@ function ExpiryBreakdown({ trades, btcPrice }) {
   });
 
   const sorted = Object.entries(expiryMap)
-    .map(([expiry, data]) => ({ expiry, ...data }))
+    .map(([expiry, data]) => ({ expiry, ...data, dte: parseDTE(expiry) }))
     .sort((a, b) => b.total - a.total)
     .slice(0, 8);
+
+  // Term structure summary
+  const totalFlow = sorted.reduce((s, e) => s + e.total, 0);
+  const nearTermFlow = sorted.filter(e => e.dte != null && e.dte <= 7).reduce((s, e) => s + e.total, 0);
+  const midTermFlow = sorted.filter(e => e.dte != null && e.dte > 7 && e.dte <= 30).reduce((s, e) => s + e.total, 0);
+  const longTermFlow = sorted.filter(e => e.dte != null && e.dte > 30).reduce((s, e) => s + e.total, 0);
+  const nearPct = totalFlow > 0 ? (nearTermFlow / totalFlow * 100).toFixed(0) : 0;
+  const midPct = totalFlow > 0 ? (midTermFlow / totalFlow * 100).toFixed(0) : 0;
+  const longPct = totalFlow > 0 ? (longTermFlow / totalFlow * 100).toFixed(0) : 0;
+  const termSummary = nearPct > 60 ? `Near-term concentrated (${nearPct}% ≤7d). Gamma-seeking tactical stance.`
+    : longPct > 50 ? `Long-dated concentrated (${longPct}% >30d). Structural positioning.`
+      : `Balanced: ${nearPct}% ≤7d, ${midPct}% 8-30d, ${longPct}% >30d.`;
+
+  const classifyExpiry = (dte) => {
+    if (dte == null || dte <= 0) return { label: "EXP", color: C.textMuted };
+    if (dte <= 7) return { label: "WKLY", color: C.red };
+    if (dte <= 35) return { label: "MTHLY", color: C.yellow };
+    if (dte <= 95) return { label: "QTRLY", color: C.accent };
+    return { label: "LEAPS", color: C.cyan };
+  };
+
+  const dteColor = (dte) => {
+    if (dte == null) return C.textMuted;
+    if (dte <= 7) return C.red;
+    if (dte <= 30) return C.yellow;
+    if (dte <= 90) return C.text;
+    return C.cyan;
+  };
 
   return (
     <div style={{ background: C.bgCard, border: `1px solid ${C.border}`, borderRadius: 8, padding: 20 }}>
@@ -636,11 +975,12 @@ function ExpiryBreakdown({ trades, btcPrice }) {
       </div>
       {sorted.map((e) => {
         const pcr = e.calls > 0 ? (e.puts / e.calls).toFixed(2) : "∞";
+        const cls = classifyExpiry(e.dte);
         return (
           <div key={e.expiry} style={{
             display: "grid",
-            gridTemplateColumns: "80px 1fr 1fr 60px",
-            gap: 12,
+            gridTemplateColumns: "65px 35px 45px 1fr 1fr 50px",
+            gap: 8,
             padding: "8px 0",
             borderBottom: `1px solid ${C.border}33`,
             fontFamily: "'JetBrains Mono', monospace",
@@ -648,6 +988,15 @@ function ExpiryBreakdown({ trades, btcPrice }) {
             alignItems: "center",
           }}>
             <span style={{ color: C.text, fontWeight: 600 }}>{e.expiry}</span>
+            <span style={{ color: dteColor(e.dte), fontSize: 10, fontWeight: 600 }}>
+              {e.dte != null ? `${e.dte}d` : "—"}
+            </span>
+            <span style={{
+              fontSize: 8, fontWeight: 700, color: cls.color,
+              padding: "1px 4px", borderRadius: 3,
+              background: cls.color + "18", border: `1px solid ${cls.color}44`,
+              textAlign: "center",
+            }}>{cls.label}</span>
             <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
               <span style={{ color: C.red, fontSize: 11 }}>P</span>
               <div style={{ flex: 1, height: 6, background: C.border, borderRadius: 3, overflow: "hidden" }}>
@@ -658,7 +1007,7 @@ function ExpiryBreakdown({ trades, btcPrice }) {
                   borderRadius: 3,
                 }} />
               </div>
-              <span style={{ color: C.textDim, fontSize: 11, minWidth: 55 }}>{e.puts.toFixed(1)}</span>
+              <span style={{ color: C.textDim, fontSize: 10, minWidth: 45 }}>{e.puts.toFixed(1)}</span>
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
               <span style={{ color: C.green, fontSize: 11 }}>C</span>
@@ -670,7 +1019,7 @@ function ExpiryBreakdown({ trades, btcPrice }) {
                   borderRadius: 3,
                 }} />
               </div>
-              <span style={{ color: C.textDim, fontSize: 11, minWidth: 55 }}>{e.calls.toFixed(1)}</span>
+              <span style={{ color: C.textDim, fontSize: 10, minWidth: 45 }}>{e.calls.toFixed(1)}</span>
             </div>
             <span style={{ color: pcr > 1.5 ? C.red : pcr > 1 ? C.yellow : C.textDim, textAlign: "right", fontSize: 11 }}>
               {pcr}
@@ -678,139 +1027,141 @@ function ExpiryBreakdown({ trades, btcPrice }) {
           </div>
         );
       })}
+      {totalFlow > 0 && (
+        <div style={{ marginTop: 12, padding: "8px 0", fontSize: 10, color: C.textDim, fontFamily: "'JetBrains Mono', monospace", borderTop: `1px solid ${C.border}33` }}>
+          📊 Term structure: {termSummary}
+        </div>
+      )}
     </div>
   );
 }
 
-function MarketInterpretation({ trades, btcPrice, putVol, callVol }) {
+function MarketInterpretation({ trades, btcPrice, putVol, callVol, ivMap, atmIV, ivPercentile }) {
   const insights = [];
 
-  // P/C ratio analysis
-  const pcr = callVol > 0 ? putVol / callVol : 0;
-  if (pcr > 1.5) {
-    insights.push({
-      type: "bearish",
-      title: "Heavy Put Activity",
-      text: `P/C ratio at ${pcr.toFixed(2)} — well above neutral. Market is aggressively hedging downside or positioning bearish. Look for concentrated put strikes below as potential target levels.`,
-    });
-  } else if (pcr < 0.5) {
-    insights.push({
-      type: "bullish",
-      title: "Call-Dominated Flow",
-      text: `P/C ratio at ${pcr.toFixed(2)} — calls dominating. Bullish positioning or upside hedging by shorts. If accompanied by spot buying (positive CVD), this is a strong bullish signal.`,
-    });
-  }
-
-  // Large put concentration
-  const putStrikes = {};
-  let totalLargePutVol = 0;
+  // ── Delta-weighted P/C ratio ──
+  const rawPcr = callVol > 0 ? putVol / callVol : 0;
+  let weightedPutVol = 0, weightedCallVol = 0;
+  const distWeight = (dist) => dist <= 3 ? 1.0 : dist <= 10 ? 0.5 : dist <= 20 ? 0.2 : 0.1;
   trades.forEach((t) => {
     const p = parseInstrument(t.instrument_name);
-    if (!p || p.type !== "P") return;
-    if (t.amount >= 5) {
-      putStrikes[p.strike] = (putStrikes[p.strike] || 0) + t.amount;
-      totalLargePutVol += t.amount;
+    if (!p || !btcPrice) return;
+    const dist = Math.abs((p.strike - btcPrice) / btcPrice * 100);
+    const w = distWeight(dist) * t.amount;
+    if (p.type === "P") weightedPutVol += w;
+    else weightedCallVol += w;
+  });
+  const weightedPcr = weightedCallVol > 0 ? weightedPutVol / weightedCallVol : 0;
+
+  if (rawPcr > 1.5 || weightedPcr > 1.2) {
+    const divergence = Math.abs(rawPcr - weightedPcr) > 0.4
+      ? ` Raw P/C (${rawPcr.toFixed(2)}) vs weighted (${weightedPcr.toFixed(2)}) diverge — OTM put noise inflating the raw ratio.`
+      : "";
+    insights.push({
+      type: "bearish", title: "Heavy Put Activity",
+      text: `Weighted P/C: ${weightedPcr.toFixed(2)} | Raw: ${rawPcr.toFixed(2)}. Aggressively hedging downside.${divergence}`
+    });
+  } else if (rawPcr < 0.5 || weightedPcr < 0.7) {
+    insights.push({
+      type: "bullish", title: "Call-Dominated Flow",
+      text: `Weighted P/C: ${weightedPcr.toFixed(2)} | Raw: ${rawPcr.toFixed(2)}. Calls dominating near the money.`
+    });
+  } else {
+    insights.push({
+      type: "neutral", title: "Balanced Flow",
+      text: `Weighted P/C: ${weightedPcr.toFixed(2)} | Raw: ${rawPcr.toFixed(2)}. No strong directional skew.`
+    });
+  }
+
+  // ── Direction-aware strike concentration ──
+  const strikeFlow = {};
+  trades.forEach((t) => {
+    const p = parseInstrument(t.instrument_name);
+    if (!p || p.type !== "P" || t.amount < 5) return;
+    if (!strikeFlow[p.strike]) strikeFlow[p.strike] = { buy: 0, sell: 0 };
+    strikeFlow[p.strike][t.direction] += t.amount;
+  });
+  const topPutStrike = Object.entries(strikeFlow)
+    .map(([k, v]) => ({ strike: parseFloat(k), ...v, net: v.buy - v.sell, total: v.buy + v.sell }))
+    .sort((a, b) => b.total - a.total)[0];
+  if (topPutStrike && topPutStrike.total > 15 && btcPrice > 0) {
+    const distPct = ((topPutStrike.strike - btcPrice) / btcPrice * 100);
+    const netLabel = topPutStrike.net > 0
+      ? `Net ${topPutStrike.net.toFixed(1)} BTC new protection added — bearish hedging.`
+      : `Net ${Math.abs(topPutStrike.net).toFixed(1)} BTC sold — premium harvesting, bullish-neutral.`;
+    insights.push({
+      type: topPutStrike.net > 0 ? "warning" : "info",
+      title: `Put Concentration $${topPutStrike.strike.toLocaleString()} (${Math.abs(distPct).toFixed(1)}% ${distPct >= 0 ? "above" : "below"})`,
+      text: `${topPutStrike.buy.toFixed(1)} bought vs ${topPutStrike.sell.toFixed(1)} sold. ${netLabel}`,
+    });
+  }
+
+  // ── Term structure insight ──
+  let nearVol = 0, weeklyVol = 0, midVol = 0, longVol = 0, totalVol = 0;
+  trades.forEach((t) => {
+    const p = parseInstrument(t.instrument_name);
+    if (!p) return;
+    const dte = parseDTE(p.expiry);
+    totalVol += t.amount;
+    if (dte != null) {
+      if (dte <= 2) nearVol += t.amount;
+      else if (dte <= 7) weeklyVol += t.amount;
+      else if (dte <= 30) midVol += t.amount;
+      else longVol += t.amount;
     }
   });
-
-  const topPutStrike = Object.entries(putStrikes).sort((a, b) => b[1] - a[1])[0];
-  if (topPutStrike && topPutStrike[1] > 20 && btcPrice > 0) {
-    const strike = parseFloat(topPutStrike[0]);
-    const distPct = ((strike - btcPrice) / btcPrice * 100);
-    const distLabel = `${Math.abs(distPct).toFixed(1)}% ${distPct >= 0 ? "above" : "below"} spot`;
-    const isITM = strike >= btcPrice; // Put is ITM when strike >= spot
-    const vol = topPutStrike[1].toFixed(1);
-
-    let putInsight;
-    if (isITM && distPct > 5) {
-      putInsight = {
-        type: "bearish",
-        title: `Concentrated ITM Puts at $${strike.toLocaleString()}`,
-        text: `${vol} BTC in deep ITM puts at $${strike.toLocaleString()} (${distLabel}). These puts already have significant intrinsic value. Heavy ITM put volume signals active bearish positioning or institutions locking in downside gains. Smart money may be expecting continued weakness below current levels.`,
-      };
-    } else if (isITM) {
-      putInsight = {
-        type: "warning",
-        title: `Concentrated Puts Near/Above Spot at $${strike.toLocaleString()}`,
-        text: `${vol} BTC in puts at $${strike.toLocaleString()} (${distLabel}). These are at-the-money or slightly ITM — maximum gamma and premium. This is aggressive downside positioning, not a distant hedge. Traders here are actively betting on or protecting against a move lower from current levels.`,
-      };
-    } else if (Math.abs(distPct) < 10) {
-      putInsight = {
-        type: "info",
-        title: `Concentrated Puts at $${strike.toLocaleString()}`,
-        text: `${vol} BTC in puts at $${strike.toLocaleString()} (${distLabel}). This is a key hedging floor — large players are establishing downside protection here. If spot approaches this level, expect put delta hedging to accelerate selling pressure. Cross-reference with your liquidation heatmap.`,
-      };
-    } else {
-      putInsight = {
-        type: "info",
-        title: `Far OTM Puts Concentrated at $${strike.toLocaleString()}`,
-        text: `${vol} BTC in puts at $${strike.toLocaleString()} (${distLabel}). Tail-risk insurance at a distant strike — large players are protecting against a black-swan crash scenario. Low probability of hitting, but the volume suggests real concern about extreme downside risk.`,
-      };
-    }
-    insights.push(putInsight);
+  if (totalVol > 0) {
+    const shortPct = ((nearVol + weeklyVol) / totalVol * 100).toFixed(0);
+    const longPct = (longVol / totalVol * 100).toFixed(0);
+    const termText = shortPct > 60 ? `${shortPct}% ≤7d DTE — gamma-seeking tactical stance.`
+      : longPct > 50 ? `${longPct}% 30d+ — structural positioning.`
+        : `Balanced: ${shortPct}% ≤7d, ${((midVol) / totalVol * 100).toFixed(0)}% 8-30d, ${longPct}% 30d+.`;
+    insights.push({ type: "info", title: "Term Structure", text: termText });
   }
+
+  // ── IV context ──
+  if (atmIV != null && atmIV > 0) {
+    const ivText = ivPercentile != null
+      ? ivPercentile < 25 ? `ATM IV ${atmIV.toFixed(0)}% (${ivPercentile}th pctl) — vol cheap. Buyers getting value.`
+        : ivPercentile > 75 ? `ATM IV ${atmIV.toFixed(0)}% (${ivPercentile}th pctl) — premium expensive. Sellers may have edge.`
+          : `ATM IV ${atmIV.toFixed(0)}% (${ivPercentile}th pctl) — mid-range.`
+      : `ATM IV: ${atmIV.toFixed(0)}%. Calibrating...`;
+    insights.push({ type: "info", title: "Implied Volatility", text: ivText });
+  }
+
+  // ── Flow Toxicity Score ──
+  let tPutBuy = 0, tPutSell = 0, tCallBuy = 0, tCallSell = 0;
+  trades.forEach((t) => {
+    const p = parseInstrument(t.instrument_name);
+    if (!p) return;
+    if (p.type === "P") { if (t.direction === "buy") tPutBuy += t.amount; else tPutSell += t.amount; }
+    else { if (t.direction === "buy") tCallBuy += t.amount; else tCallSell += t.amount; }
+  });
+  const toxDenom = tPutBuy + tPutSell + tCallBuy + tCallSell;
+  const toxicity = toxDenom > 0 ? ((tPutBuy - tPutSell) - (tCallBuy - tCallSell)) / toxDenom : 0;
+  const tox = Math.max(-1, Math.min(1, toxicity));
+  const toxLabel = tox > 0.3 ? "Defensive — protection being added"
+    : tox > 0.1 ? "Slightly defensive"
+      : tox < -0.3 ? "Aggressive — bullish conviction"
+        : tox < -0.1 ? "Slightly bullish" : "Neutral";
 
   // Whale activity
   const whaleTrades = trades.filter((t) => t.amount >= 50);
   if (whaleTrades.length > 0) {
-    const whalePuts = whaleTrades.filter((t) => parseInstrument(t.instrument_name)?.type === "P");
-    const whaleCalls = whaleTrades.filter((t) => parseInstrument(t.instrument_name)?.type === "C");
+    const wP = whaleTrades.filter((t) => parseInstrument(t.instrument_name)?.type === "P").length;
+    const wC = whaleTrades.filter((t) => parseInstrument(t.instrument_name)?.type === "C").length;
     insights.push({
-      type: whalePuts.length > whaleCalls.length ? "bearish" : "bullish",
-      title: `${whaleTrades.length} Whale Trade${whaleTrades.length > 1 ? "s" : ""} Detected`,
-      text: `${whalePuts.length} whale puts vs ${whaleCalls.length} whale calls. ${whalePuts.length > whaleCalls.length
-        ? "Large players are buying downside protection — they either hold longs they want to hedge or are making directional bearish bets."
-        : "Large players are positioning for upside — either covering shorts via calls or making directional bullish bets."}`,
+      type: wP > wC ? "bearish" : "bullish",
+      title: `${whaleTrades.length} Whale Trade${whaleTrades.length > 1 ? "s" : ""}`,
+      text: `${wP} whale puts vs ${wC} whale calls. ${wP > wC ? "Large players hedging downside." : "Large players positioning bullish."}`,
     });
   }
 
-  // Near-money put buying (hedging signal)
-  if (btcPrice > 0) {
-    const nearMoneyPutBuys = trades.filter((t) => {
-      const p = parseInstrument(t.instrument_name);
-      if (!p || p.type !== "P" || t.direction !== "buy") return false;
-      const strikeDistPct = (p.strike - btcPrice) / btcPrice;
-      // Only count puts at or below spot (OTM/ATM puts) — ITM put buys are a different signal
-      return strikeDistPct <= 0.02 && Math.abs(strikeDistPct) < 0.05 && t.amount >= 5;
-    });
-
-    const totalNearPutVol = nearMoneyPutBuys.reduce((sum, t) => sum + t.amount, 0);
-    if (totalNearPutVol > 10) {
-      insights.push({
-        type: "warning",
-        title: "Active Hedging Near Spot",
-        text: `${totalNearPutVol.toFixed(1)} BTC in near-the-money put buying (within 5% of spot, at or below current price). Large players are buying downside protection at current levels — this is classic institutional hedging. Expect increased implied vol at these strikes and potential delta-hedge selling if spot dips further.`,
-      });
-    }
-  }
-
-  if (insights.length === 0) {
-    insights.push({
-      type: "neutral",
-      title: "No Strong Signals",
-      text: "Options flow is balanced with no outsized positioning. Market is in a wait-and-see mode. Monitor for changes in P/C ratio or sudden large trades.",
-    });
-  }
-
-  const typeColors = {
-    bearish: C.red,
-    bullish: C.green,
-    warning: C.yellow,
-    info: C.cyan,
-    neutral: C.textDim,
-  };
-
-  const typeIcons = {
-    bearish: "🔴",
-    bullish: "🟢",
-    warning: "⚠️",
-    info: "💡",
-    neutral: "⚪",
-  };
-
+  const typeColors = { bearish: C.red, bullish: C.green, warning: C.yellow, info: C.cyan, neutral: C.textDim };
+  const typeIcons = { bearish: "🔴", bullish: "🟢", warning: "⚠️", info: "💡", neutral: "⚪" };
   const [showAll, setShowAll] = useState(false);
-  const visibleInsights = showAll ? insights : insights.slice(0, 2);
-  const hasMore = insights.length > 2;
+  const visibleInsights = showAll ? insights : insights.slice(0, 3);
+  const hasMore = insights.length > 3;
 
   return (
     <div style={{ background: C.bgCard, border: `1px solid ${C.border}`, borderRadius: 8, padding: 20 }}>
@@ -822,46 +1173,60 @@ function MarketInterpretation({ trades, btcPrice, putVol, callVol }) {
           4H
         </span>
       </div>
+
+      {/* Flow Toxicity Gauge */}
+      <div style={{ marginBottom: 16, padding: "10px 12px", background: C.border + "22", borderRadius: 6, fontFamily: "'JetBrains Mono', monospace" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+          <span style={{ fontSize: 10, color: C.textDim, textTransform: "uppercase", letterSpacing: 1 }}>Flow Toxicity</span>
+          <span style={{ fontSize: 11, color: tox > 0.1 ? C.red : tox < -0.1 ? C.green : C.textDim, fontWeight: 600 }}>
+            {tox > 0 ? "+" : ""}{tox.toFixed(2)} — {toxLabel}
+          </span>
+        </div>
+        <div style={{ position: "relative", height: 12, background: C.border + "60", borderRadius: 6, overflow: "hidden" }}>
+          <div style={{ position: "absolute", left: "50%", top: 0, bottom: 0, width: 2, background: C.textMuted + "66" }} />
+          {tox > 0 ? (
+            <div style={{
+              position: "absolute", left: "50%", top: 0, bottom: 0,
+              width: `${tox * 50}%`,
+              background: `linear-gradient(90deg, transparent, ${C.red}88)`,
+              borderRadius: "0 6px 6px 0", transition: "width 0.4s",
+            }} />
+          ) : (
+            <div style={{
+              position: "absolute", right: "50%", top: 0, bottom: 0,
+              width: `${Math.abs(tox) * 50}%`,
+              background: `linear-gradient(270deg, transparent, ${C.green}88)`,
+              borderRadius: "6px 0 0 6px", transition: "width 0.4s",
+            }} />
+          )}
+        </div>
+        <div style={{ display: "flex", justifyContent: "space-between", marginTop: 3, fontSize: 8, color: C.textMuted }}>
+          <span>BULLISH</span><span>BEARISH</span>
+        </div>
+      </div>
+
       <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
         {visibleInsights.map((ins, i) => (
-          <div key={i} style={{
-            padding: "14px 16px",
-            borderRadius: 6,
-            borderLeft: `3px solid ${typeColors[ins.type]}`,
-            background: typeColors[ins.type] + "08",
-          }}>
-            <div style={{
-              fontSize: 13,
-              fontWeight: 700,
-              color: typeColors[ins.type],
-              marginBottom: 6,
-              fontFamily: "'JetBrains Mono', monospace",
-            }}>
+          <div key={i} style={{ padding: "14px 16px", borderRadius: 6, borderLeft: `3px solid ${typeColors[ins.type]}`, background: typeColors[ins.type] + "08" }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: typeColors[ins.type], marginBottom: 6, fontFamily: "'JetBrains Mono', monospace" }}>
               {typeIcons[ins.type]} {ins.title}
             </div>
-            <div style={{
-              fontSize: 12,
-              color: C.text,
-              lineHeight: 1.6,
-              fontFamily: "'JetBrains Mono', monospace",
-            }}>
+            <div style={{ fontSize: 12, color: C.text, lineHeight: 1.6, fontFamily: "'JetBrains Mono', monospace" }}>
               {ins.text}
             </div>
           </div>
         ))}
         {hasMore && (
-          <button
-            onClick={() => setShowAll(!showAll)}
-            style={{
-              background: "none", border: `1px solid ${C.border}`, color: C.accent,
-              padding: "6px 14px", borderRadius: 4, cursor: "pointer",
-              fontFamily: "'JetBrains Mono', monospace", fontSize: 11,
-              alignSelf: "center", transition: "all 0.15s",
-            }}
+          <button onClick={() => setShowAll(!showAll)} style={{
+            background: "none", border: `1px solid ${C.border}`, color: C.accent,
+            padding: "6px 14px", borderRadius: 4, cursor: "pointer",
+            fontFamily: "'JetBrains Mono', monospace", fontSize: 11,
+            alignSelf: "center", transition: "all 0.15s",
+          }}
             onMouseEnter={(e) => { e.currentTarget.style.borderColor = C.accent; e.currentTarget.style.background = C.accent + "11"; }}
             onMouseLeave={(e) => { e.currentTarget.style.borderColor = C.border; e.currentTarget.style.background = "none"; }}
           >
-            {showAll ? "Show less" : `Show ${insights.length - 2} more`}
+            {showAll ? "Show less" : `Show ${insights.length - 3} more`}
           </button>
         )}
       </div>
@@ -1056,7 +1421,7 @@ function SavedTradesPanel({ btcPrice }) {
                     </span>
                   )}
                   <span style={{ display: "block", width: "100%", color: C.textDim, fontSize: 10, lineHeight: 1.4, marginTop: 4 }}>
-                    {interpretTrade(p?.type, p?.strike, t.direction, t.amount, t.btcPriceAtSave || btcPrice, p?.expiry)}
+                    {interpretTrade(p?.type, p?.strike, t.direction, t.amount, t.btcPriceAtSave || btcPrice, p?.expiry).detail}
                   </span>
                   {(() => {
                     const hint = findRelatedLegHint(t, sortedTrades, btcPrice);
@@ -1304,7 +1669,8 @@ function SavedTradesPanel({ btcPrice }) {
                       const isBuy = t.direction === "buy";
                       const spotAtTime = t.btcPriceAtSave || btcPrice;
                       const distPct = spotAtTime > 0 ? ((parsed.strike - spotAtTime) / spotAtTime * 100).toFixed(1) : "—";
-                      const interp = interpretTrade(parsed.type, parsed.strike, t.direction, t.amount, spotAtTime, parsed.expiry);
+                      const interpObj = interpretTrade(parsed.type, parsed.strike, t.direction, t.amount, spotAtTime, parsed.expiry);
+                      const interp = interpObj.detail;
 
                       // Strike-level context
                       const aggKey = `${parsed.strike}_${parsed.type}`;
@@ -1566,17 +1932,40 @@ export default function BTCFlowDashboard() {
   const [error, setError] = useState(null);
   const [filter, setFilter] = useState("all"); // all, puts, calls, large
   const [refreshCount, setRefreshCount] = useState(0);
+  const [ivMap, setIvMap] = useState({});
+  const [ivPercentile, setIvPercentile] = useState(null);
+  const [atmIV, setAtmIV] = useState(null);
+  const [expandedTradeId, setExpandedTradeId] = useState(null);
   const intervalRef = useRef(null);
+  const ivHistoryRef = useRef([]); // rolling ATM IV history for percentile
 
   const fetchData = useCallback(async () => {
     try {
-      const [price, trades1h, trades4h] = await Promise.all([
+      const [price, trades1h, trades4h, bookSummary] = await Promise.all([
         fetchBTCPrice(),
         fetchOptionsTrades(1),   // 1h window for P/C sentiment
         fetchOptionsTrades(4),   // 4h window for interpretation + trade list
+        fetchBookSummary(),      // IV data for all instruments
       ]);
 
       if (price) setBtcPrice(price);
+
+      // Build IV lookup map from book summary
+      if (bookSummary && bookSummary.length > 0) {
+        const newIvMap = buildIVMap(bookSummary);
+        setIvMap(newIvMap);
+
+        // Extract ATM IV and track history for percentile
+        const currentATMIV = extractATMIV(newIvMap, price);
+        if (currentATMIV !== null) {
+          setAtmIV(currentATMIV);
+          const hist = ivHistoryRef.current;
+          hist.push(currentATMIV);
+          if (hist.length > 200) hist.shift(); // cap at 200 entries
+          const pctl = computePercentile(currentATMIV, hist);
+          setIvPercentile(pctl);
+        }
+      }
 
       // 1h data → P/C ratio and sentiment
       if (trades1h && trades1h.length > 0) {
@@ -1746,13 +2135,13 @@ export default function BTCFlowDashboard() {
 
         {/* Market Interpretation */}
         <div style={{ marginBottom: 20 }}>
-          <MarketInterpretation trades={trades} btcPrice={btcPrice} putVol={putVol} callVol={callVol} />
+          <MarketInterpretation trades={trades} btcPrice={btcPrice} putVol={putVol} callVol={callVol} ivMap={ivMap} atmIV={atmIV} ivPercentile={ivPercentile} />
         </div>
 
         {/* Strike Heatmaps + Expiry */}
         <div className="panels-grid" style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 14, marginBottom: 20 }}>
-          <StrikeHeatmap trades={trades} btcPrice={btcPrice} type="P" />
-          <StrikeHeatmap trades={trades} btcPrice={btcPrice} type="C" />
+          <StrikeHeatmap trades={trades} btcPrice={btcPrice} type="P" ivMap={ivMap} />
+          <StrikeHeatmap trades={trades} btcPrice={btcPrice} type="C" ivMap={ivMap} />
           <ExpiryBreakdown trades={trades} btcPrice={btcPrice} />
         </div>
 
@@ -1799,7 +2188,7 @@ export default function BTCFlowDashboard() {
           {/* Table Header */}
           <div className="trades-header" style={{
             display: "grid",
-            gridTemplateColumns: "70px 52px 50px 85px 65px 72px 62px 55px minmax(200px, 1fr)",
+            gridTemplateColumns: "70px 52px 50px 85px 55px 72px 62px 45px 50px minmax(180px, 1fr)",
             padding: "8px 16px",
             fontSize: 10,
             color: C.textMuted,
@@ -1815,21 +2204,72 @@ export default function BTCFlowDashboard() {
             <span>Dist</span>
             <span>Size</span>
             <span>Expiry</span>
+            <span>IV</span>
             <span>Tag</span>
             <span>Interpretation</span>
           </div>
 
-          {/* Trade Rows */}
+          {/* Trade Rows — with multi-leg grouping */}
           <div style={{ maxHeight: 500, overflowY: "auto" }}>
             {filteredTrades.length === 0 ? (
               <div style={{ padding: 40, textAlign: "center", color: C.textMuted }}>
                 {status === "loading" ? <LoadingDots /> : "No trades matching filter"}
               </div>
-            ) : (
-              filteredTrades.map((t, i) => (
-                <TradeRow key={t.trade_id || i} trade={t} btcPrice={btcPrice} index={i} />
-              ))
-            )}
+            ) : (() => {
+              const groups = groupTradesIntoStructures(filteredTrades);
+              let rowIndex = 0;
+              return groups.map((group, gi) => {
+                if (group.type !== "single" && group.legs.length >= 2) {
+                  // Multi-leg structure
+                  const structInterp = interpretStructure(group);
+                  return (
+                    <div key={`grp-${gi}`}>
+                      {structInterp && (
+                        <div style={{
+                          padding: "6px 16px", fontSize: 10, color: C.purple,
+                          background: C.purpleDim, fontWeight: 600,
+                          fontFamily: "'JetBrains Mono', monospace",
+                          borderBottom: `1px solid ${C.purple}33`,
+                        }}>
+                          🔗 {structInterp}
+                        </div>
+                      )}
+                      {group.legs.map((leg) => {
+                        const idx = rowIndex++;
+                        return (
+                          <TradeRow
+                            key={leg.trade_id || idx}
+                            trade={leg}
+                            btcPrice={btcPrice}
+                            index={idx}
+                            ivMap={ivMap}
+                            ivPercentile={ivPercentile}
+                            structureLabel={group.label}
+                            isExpanded={expandedTradeId === leg.trade_id}
+                            onToggle={() => setExpandedTradeId(expandedTradeId === leg.trade_id ? null : leg.trade_id)}
+                          />
+                        );
+                      })}
+                    </div>
+                  );
+                }
+                // Single trade
+                const t = group.legs[0];
+                const idx = rowIndex++;
+                return (
+                  <TradeRow
+                    key={t.trade_id || idx}
+                    trade={t}
+                    btcPrice={btcPrice}
+                    index={idx}
+                    ivMap={ivMap}
+                    ivPercentile={ivPercentile}
+                    isExpanded={expandedTradeId === t.trade_id}
+                    onToggle={() => setExpandedTradeId(expandedTradeId === t.trade_id ? null : t.trade_id)}
+                  />
+                );
+              });
+            })()}
           </div>
         </div>
 
