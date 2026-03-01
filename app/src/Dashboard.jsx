@@ -196,7 +196,9 @@ function parseDTE(expiryStr) {
   if (isNaN(day) || mon === undefined || isNaN(yr)) return null;
   const exp = new Date(yr, mon, day, 8, 0); // Deribit settles 08:00 UTC
   const now = new Date();
-  return Math.max(0, Math.round((exp - now) / 86400000));
+  const diffMs = exp - now;
+  if (diffMs <= 0) return 0; // Already expired
+  return Math.ceil(diffMs / 86400000); // Any remaining time = at least 1 DTE
 }
 
 function interpretTrade(type, strike, direction, amount, btcPrice, expiry) {
@@ -883,13 +885,8 @@ function SavedTradesPanel({ btcPrice }) {
     return () => { cancelled = true; };
   }, []);
 
-  // Refresh: merge localStorage + API periodically
+  // Sync from API every 30s to pick up cron-captured trades
   useEffect(() => {
-    const i = setInterval(() => {
-      const local = loadSavedTrades();
-      setSavedTrades(local);
-    }, 5000);
-    // Also sync from API every 30s to pick up cron-captured trades
     const apiSync = setInterval(() => {
       loadTradesFromAPI().then(apiTrades => {
         if (!apiTrades.length) return;
@@ -900,7 +897,7 @@ function SavedTradesPanel({ btcPrice }) {
         });
       });
     }, 30000);
-    return () => { clearInterval(i); clearInterval(apiSync); };
+    return () => { clearInterval(apiSync); };
   }, []);
 
   const handleClear = () => {
