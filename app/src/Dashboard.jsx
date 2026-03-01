@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 
 // ============================================================
 // PERSISTENT TRADE STORAGE (localStorage + Supabase API)
@@ -1288,48 +1288,89 @@ function SavedTradesPanel({ btcPrice, ivMap, ivPercentile }) {
   };
 
   // Sort based on selected mode
-  const sortedTrades = [...savedTrades].sort((a, b) => {
-    const aN = a.notionalUsd || 0;
-    const bN = b.notionalUsd || 0;
-    const aT = a.timestamp || 0;
-    const bT = b.timestamp || 0;
+  const sortedTrades = useMemo(() => {
+    const arr = [...savedTrades];
+    if (sortMode === "size") return arr.sort((a, b) => (b.notionalUsd || 0) - (a.notionalUsd || 0) || (b.timestamp || 0) - (a.timestamp || 0));
+    if (sortMode === "recent") return arr.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
 
-    if (sortMode === "size") {
-      return bN - aN || bT - aT;
-    }
-    if (sortMode === "recent") {
-      return bT - aT;
-    }
-    // Weighted: expiry-aware sorting
-    // Priority: (1) Active trades over expired, (2) Tier, (3) DTE urgency, (4) Recency
-    const aDTE = getDTE(a);
-    const bDTE = getDTE(b);
-    const aExpired = aDTE !== null && aDTE <= 0;
-    const bExpired = bDTE !== null && bDTE <= 0;
+    // ── Weighted: composite scoring model ──
+    // Score = w1·notional + w2·urgency + w3·proximity + w4·adversity + w5·recency
+    const now = Date.now();
+    const HALF_LIFE_MS = 48 * 3600 * 1000; // 48h recency decay
 
-    // Expired trades always sort below active ones
-    if (aExpired !== bExpired) return aExpired ? 1 : -1;
+    const scoreCache = new Map();
+    const computeScore = (t) => {
+      if (scoreCache.has(t.trade_id)) return scoreCache.get(t.trade_id);
 
-    // Tier assignment
-    const aTier = aN >= MASSIVE_THRESHOLD_USD ? 3 : aN >= MAJOR_THRESHOLD_USD ? 2 : aN >= 500_000 ? 1 : 0;
-    const bTier = bN >= MASSIVE_THRESHOLD_USD ? 3 : bN >= MAJOR_THRESHOLD_USD ? 2 : bN >= 500_000 ? 1 : 0;
+      const p = parseInstrument(t.instrument_name);
+      const dte = p ? parseDTE(p.expiry) : null;
+      const expired = dte !== null && dte <= 0;
+      const notional = t.notionalUsd || 0;
+      const spotAtEntry = t.btcPriceAtSave || btcPrice;
 
-    // Different tiers → higher tier wins
-    if (aTier !== bTier) return bTier - aTier;
+      // (1) Notional commitment — log scale, normalized to [0, 1]
+      // $100K → ~0.33, $1M → ~0.67, $10M → ~1.0, $50M → 1.0
+      const notionalScore = notional > 0 ? Math.min(1, Math.log10(notional / 100_000) / Math.log10(500)) : 0;
 
-    // Same tier — if both active, boost near-term (lower DTE = more urgent)
-    if (!aExpired && !bExpired && aDTE !== null && bDTE !== null) {
-      // Near-term (≤7 DTE) trades get priority within same tier
-      const aNearTerm = aDTE <= 7 ? 1 : 0;
-      const bNearTerm = bDTE <= 7 ? 1 : 0;
-      if (aNearTerm !== bNearTerm) return bNearTerm - aNearTerm;
-      // Both near-term or both not → most urgent (lowest DTE) first
-      if (aDTE !== bDTE) return aDTE - bDTE;
-    }
+      // (2) DTE urgency — exponential decay curve
+      // 0 DTE → 1.0, 1 DTE → 0.9, 3 DTE → 0.7, 7 DTE → 0.45, 30 DTE → 0.1, 90 DTE → 0.02
+      let urgencyScore = 0.3; // default for unknown DTE
+      if (dte !== null && !expired) {
+        urgencyScore = Math.exp(-dte / 7); // 7-day half-life
+      }
 
-    // Final tiebreaker: most recent first
-    return bT - aT;
-  });
+      // (3) Spot proximity — how close is strike to current spot
+      let proximityScore = 0.3; // default for unknown
+      if (p && btcPrice > 0) {
+        const dist = Math.abs((p.strike - btcPrice) / btcPrice * 100);
+        // ATM (0-3%): 1.0, NTM (3-10%): 0.5-0.8, OTM (10-20%): 0.2-0.5, Deep OTM: 0.1
+        proximityScore = dist <= 3 ? 1.0 : dist <= 10 ? 1.0 - (dist - 3) * 0.07 : dist <= 20 ? 0.5 - (dist - 10) * 0.03 : 0.1;
+      }
+
+      // (4) Adversity / urgency modifier — positions moving against you need attention
+      let adversityScore = 0.5; // neutral baseline
+      if (p && btcPrice > 0 && spotAtEntry > 0) {
+        const spotMovePct = (btcPrice - spotAtEntry) / spotAtEntry * 100;
+        const isPut = p.type === "P";
+        const isBuy = t.direction === "buy";
+        const favorable = isPut
+          ? (isBuy ? spotMovePct < 0 : spotMovePct > 0)
+          : (isBuy ? spotMovePct > 0 : spotMovePct < 0);
+
+        if (!favorable && Math.abs(spotMovePct) > 3) {
+          // Adverse move > 3% — boost attention
+          adversityScore = 0.7 + Math.min(0.3, Math.abs(spotMovePct) / 30);
+        } else if (favorable && Math.abs(spotMovePct) > 5) {
+          // Big favorable move — less urgent but still notable
+          adversityScore = 0.3;
+        }
+
+        // ITM near expiry — exercise event incoming
+        const itm = isPut ? btcPrice < p.strike : btcPrice > p.strike;
+        if (itm && dte !== null && dte <= 3 && !expired) {
+          adversityScore = 1.0; // max urgency
+        }
+      }
+
+      // (5) Recency — 48h half-life decay
+      const age = now - (t.timestamp || 0);
+      const recencyScore = Math.exp(-age * Math.LN2 / HALF_LIFE_MS);
+
+      // Composite: weighted sum
+      const score = expired
+        ? -(0.1 + recencyScore * 0.1) // negative = bottom, but recently-expired first
+        : (notionalScore * 0.40) + (urgencyScore * 0.25) + (proximityScore * 0.15)
+        + (adversityScore * 0.10) + (recencyScore * 0.10);
+
+      scoreCache.set(t.trade_id, score);
+      return score;
+    };
+
+    return arr.sort((a, b) => {
+      const diff = computeScore(b) - computeScore(a);
+      return diff !== 0 ? diff : (b.timestamp || 0) - (a.timestamp || 0);
+    });
+  }, [savedTrades, sortMode, btcPrice]);
 
   return (
     <>
