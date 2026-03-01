@@ -1,125 +1,234 @@
-# ₿ BTC Options Flow — Real-Time Whale Tracking Terminal
+# ₿ BTC Options Flow — Institutional-Grade Options Intelligence Terminal
 
-A real-time BTC options flow dashboard that pulls directly from Deribit's public API. No paid data feeds. No API keys. Just raw institutional flow — parsed, interpreted, and tracked live.
+A real-time BTC options flow dashboard that pulls directly from Deribit's public API and transforms raw trade data into actionable institutional intelligence. No paid data feeds. No API keys. Real-time IV context. Multi-leg detection. Flow toxicity scoring. Whale tracking with composite-scored prioritization.
 
-![Dashboard Hero](docs/screenshots/dashboard_hero.jpg)
+**Built for traders who read flow, not just watch it.**
 
-## Features
+---
 
-### 📊 Live Market Overview
-- **Real-time BTC price** from Deribit
-- **Put/Call ratio** with volume breakdown
-- **Sentiment bar** — visual put/call flow balance
-- **Auto-refresh** every 15 seconds
+## Architecture
 
-### 🧠 Market Interpretation Engine
-Auto-generates actionable insights from the options flow:
-- **Concentrated strike detection** — distinguishes ITM puts (bearish positioning) from OTM hedging floors
-- **Active hedging signals** — near-the-money put buying filtered to only count OTM/ATM puts
-- **Whale activity detection** — flags unusual institutional-size flow
-- **Collapsible UI** — shows top 2 insights by default with a "Show more" toggle
+```
+Deribit Public API (15s polling)
+    ├── get_last_trades_by_currency       → live trade feed
+    ├── get_book_summary_by_currency      → IV map + ATM percentile
+    └── get_index_price                   → BTC spot reference
+            │
+            ▼
+┌──────────────────────────────────────────────────┐
+│                Dashboard.jsx                     │
+│  ┌────────────┐  ┌─────────────┐  ┌───────────┐ │
+│  │ IV Pipeline │  │ interpretTrade │  │ Multi-Leg │ │
+│  │ buildIVMap  │  │   v2 Engine    │  │ Grouping  │ │
+│  │ ATM pctl   │  │ 9 variables    │  │ ±2s/±20%  │ │
+│  └─────┬──────┘  └──────┬────────┘  └─────┬─────┘ │
+│        └────────────────┼──────────────────┘       │
+│                         ▼                          │
+│  ┌──────────────────────────────────────────────┐  │
+│  │              UI Components                    │ │
+│  │  TradeRow · StrikeHeatmap · MarketInterp     │ │
+│  │  ExpiryBreakdown · SavedTradesPanel          │ │
+│  └──────────────────────────────────────────────┘  │
+│                         ▼                          │
+│  ┌──────────────────────────────────────────────┐  │
+│  │        Supabase + localStorage               │ │
+│  │        Persistent whale trade storage         │ │
+│  └──────────────────────────────────────────────┘  │
+└──────────────────────────────────────────────────┘
+```
 
-### 🎯 Institutional-Grade Trade Interpretations
-Every trade gets a multi-clause, plain-English interpretation — the kind of read you'd hear on an institutional desk:
+---
 
-- **6 moneyness zones** — Deep ITM → Deep OTM, each with tailored commentary
-- **5 DTE buckets** — Expiring (gamma lottery), weekly, near-term, medium (strategic), LEAPS (structural)
-- **4 size tiers** — Meaningful (5+ BTC), large (25+), institutional (50+), market-moving (200+)
-- **Context-aware reads** — e.g. "ATM put buy at $66,000 — high-conviction downside play. Paying full premium for near-the-money protection."
+## Core Engine: Interpretation Pipeline
 
-### 🔥 Strike Heatmaps & Expiry Breakdown
-- **Top put/call strikes by volume** — see where the money is clustering
-- **Volume by expiry** — understand the term structure of positioning
+### IV Data Pipeline
 
-### 🐋 Persistent Whale Trade Tracker
-Automatically saves and categorizes significant trades ($500K+ notional or ≥50 BTC):
+Every 15-second refresh pulls the full Deribit book summary, building a per-instrument IV map containing mark IV, bid/ask IV, open interest, and mid-price. A rolling ATM IV percentile is computed over the session (~200 samples across 50 minutes), enabling relative vol regime classification.
 
-| Tier | Threshold | Tag | Color |
-|------|-----------|-----|-------|
-| 🔱 MASSIVE | $10M+ notional | `🔱 MASSIVE` | Gold |
-| ⚡ MAJOR | $1M+ notional | `⚡ MAJOR` | Orange |
-| 🐋 WHALE | ≥50 BTC | `WHALE` | Purple |
-| 📊 Notable | $500K+ notional | `>500K` | Blue |
+### `interpretTrade` v2
 
-#### Smart Sorting
-Three sort modes with one-click toggles:
+Every trade is interpreted through a 9-variable model returning a structured object:
 
-- **⚖ WEIGHTED** (default) — composite score using `log(notional) × recency_decay`. MASSIVE trades ($10M+) get a 48-hour half-life to stay pinned at the top; normal trades use a 6-hour half-life.
-- **💰 SIZE** — pure notional value, largest first
-- **🕐 RECENT** — chronological, newest first
+```
+{ summary, detail, tags, sentiment }
+```
 
-![Whale Trades Panel](docs/screenshots/whale_panel.png)
+| Variable | What it contributes |
+|----------|-------------------|
+| Type (P/C) | Directional context |
+| Strike | Moneyness zone (6 levels: deep ITM → deep OTM) |
+| Direction | Buyer vs. seller intent |
+| Size | Tier classification (5 → 200+ BTC) |
+| BTC Price | Distance-from-spot percentage |
+| Expiry / DTE | Time horizon bucket (5 levels) |
+| Mark IV | Instrument-level vol context |
+| IV Percentile | Session-relative regime (cheap / mid / expensive) |
+| Mid Price | Premium commitment in BTC and USD |
+
+Sentiment is classified as `bullish`, `bearish`, `neutral`, or `vol_trade` (ATM straddle components in extreme IV regimes).
+
+### Multi-Leg Structure Detection
+
+Trades within ±2 seconds and ±20% size are automatically grouped:
+
+| Structure | Criteria |
+|-----------|----------|
+| Vertical Spread | Same type, opposite direction, same expiry |
+| Straddle | P+C, same direction, same strike (±2%), same expiry |
+| Strangle | P+C, same direction, different strikes, same expiry |
+| Risk Reversal | P+C, opposite direction, same expiry |
+| Calendar | Same type, same direction, different expiry |
+
+Grouped trades render with structure labels and thesis-level interpretations.
+
+---
+
+## Dashboard Components
+
+### 🧠 Market Interpretation Panel
+
+Five analytical layers, updated every refresh:
+
+- **Delta-weighted P/C ratio** — ATM trades weighted 1.0x, deep OTM 0.1x. Eliminates noise from distant strikes.
+- **Direction-aware strike concentration** — Buy vs. sell split at the most active put strike with net flow read.
+- **Term structure** — Flow distribution by DTE bucket with tactical/structural interpretation.
+- **ATM IV context** — Current ATM IV with session percentile and regime classification.
+- **Flow Toxicity Score** — Horizontal gauge (-1.0 bullish ↔ +1.0 bearish) measuring net taker directional bias.
+
+### 📊 Directional Strike Heatmaps
+
+Stacked green/red buy/sell bar segments per strike with:
+- Net direction badges (`BUY ↑` / `SELL ↓` / `MIXED`)
+- Signed net volume
+- Buy and sell volume labels within each bar
+
+### 📅 Expiry Breakdown
+
+- **DTE column** color-coded by urgency
+- **Classification badges**: `WKLY` · `MTHLY` · `QTRLY` · `LEAPS`
+- **Term structure summary**: automated read of flow concentration patterns
 
 ### 📡 Live Trade Feed
-- All recent options trades in real-time
-- Filter by: All, Puts, Calls, Large
-- Every trade gets a contextual interpretation with moneyness, DTE, and size awareness
 
-## Tech Stack
+Compact click-to-expand rows with:
+- Sentiment-colored summary tag line (`OTM PUT BUY | -8% | Hedge | IV 52 (35th)`)
+- IV column per trade
+- Expandable detail: full interpretation + mark IV, bid/ask IV, OI, mid-price
+- Multi-leg structure badges for detected spreads/straddles/etc.
 
-- **React** + **Vite** — fast, modern frontend
-- **Deribit Public API** — no authentication required
-- **localStorage** — client-side persistence for whale trades
-- **Inline styles** — zero CSS dependencies, dark terminal aesthetic
+### 🐋 Persistent Whale Tracker
+
+Auto-saves trades exceeding $500K notional or 50 BTC. All interpretations receive full IV context.
+
+| Tier | Threshold | Tag |
+|------|-----------|-----|
+| 🔱 MASSIVE | $10M+ | Gold badge |
+| ⚡ MAJOR | $1M+ | Orange badge |
+| 🐋 WHALE | ≥50 BTC | Purple badge |
+| 📊 Notable | $500K+ | Blue badge |
+
+**🔥 Expiring This Week** — standalone alert section for high-notional positions expiring within 7 days.
+
+#### Composite Weighted Sort
+
+The "Weighted" sort mode scores every trade as a continuous floating-point value:
+
+| Factor | Weight | Method |
+|--------|--------|--------|
+| Notional | 40% | `log₁₀` scale — no cliff effects |
+| DTE Urgency | 25% | Exponential decay, 7-day half-life |
+| Spot Proximity | 15% | ATM > NTM > OTM > Deep OTM |
+| Adversity | 10% | Positions moving against you rank higher |
+| Recency | 10% | 48-hour half-life decay |
+
+ITM positions within 3 DTE trigger maximum urgency. Expired trades sink to bottom.
+
+---
+
+## Serverless Backend (Optional)
+
+Vercel serverless functions + Supabase for persistent whale trade storage across sessions:
+
+| Endpoint | Purpose |
+|----------|---------|
+| `api/trades.js` | GET/POST saved trades via Supabase |
+| `api/cron/poll-trades.js` | Scheduled polling to auto-capture whales |
+
+Supabase schema in `supabase-setup.sql`. Configure via `.env` (see `.env.example`).
+
+---
 
 ## Quick Start
 
 ```bash
-# Clone the repo
 git clone https://github.com/laloquidity/btc-options-flow.git
 cd btc-options-flow/app
-
-# Install dependencies
 npm install
-
-# Start the dev server
 npm run dev
 ```
 
-Open [http://localhost:5173](http://localhost:5173) and the dashboard will start pulling live data immediately.
+Open [http://localhost:5173](http://localhost:5173). Live data starts flowing immediately — no API keys needed.
+
+For persistent whale storage, deploy to Vercel and configure Supabase (see `.env.example`).
+
+---
 
 ## Project Structure
 
 ```
 btc-options-flow/
-├── app/                          # React application
+├── app/                              # React application
 │   ├── src/
-│   │   ├── Dashboard.jsx         # Main dashboard component (all logic + UI)
-│   │   ├── App.jsx               # App wrapper
-│   │   ├── main.jsx              # Entry point
-│   │   └── index.css             # Minimal reset
+│   │   ├── Dashboard.jsx             # Core: all logic + UI (~2300 lines)
+│   │   ├── App.jsx                   # App wrapper
+│   │   ├── main.jsx                  # Entry point
+│   │   └── index.css                 # Reset + animations
 │   ├── package.json
 │   └── vite.config.js
-├── bot.py                        # Telegram alerting bot (optional)
-├── dashboard.jsx                 # Original standalone component
-├── requirements.txt              # Python deps for bot
-├── BTC_Flow_System_Setup_Guide.md
+├── api/                              # Vercel serverless functions
+│   ├── trades.js                     # Supabase trade CRUD
+│   └── cron/
+│       └── poll-trades.js            # Scheduled whale capture
+├── bot.py                            # Telegram alerting bot (optional)
+├── supabase-setup.sql                # DB schema
+├── vercel.json                       # Vercel config
+├── .env.example                      # Environment template
 └── README.md
 ```
 
-## Telegram Bot (Optional)
+## Tech Stack
 
-The repo includes a Python Telegram bot (`bot.py`) that sends real-time alerts for:
-- Large options trades on Deribit
-- On-chain whale BTC movements (via mempool.space)
-- P/C ratio shifts
-
-To set it up:
-1. Get a bot token from [@BotFather](https://t.me/BotFather)
-2. Get your chat ID from [@userinfobot](https://t.me/userinfobot)
-3. Edit the `CONFIG` dict in `bot.py`
-4. Run: `python bot.py`
-
-See [BTC_Flow_System_Setup_Guide.md](BTC_Flow_System_Setup_Guide.md) for detailed instructions.
+| Layer | Technology | Notes |
+|-------|-----------|-------|
+| Frontend | React + Vite | Single-component architecture |
+| Data | Deribit Public API | No auth, 15s polling |
+| Storage | Supabase + localStorage | Dual persistence |
+| Hosting | Vercel | Serverless functions + static |
+| Styling | Inline styles | Zero CSS deps, dark terminal aesthetic |
 
 ## Data Sources
 
-All data comes from **free, public APIs** — no API keys or paid subscriptions needed:
+All data comes from **free, public APIs**:
 
-| Source | Data | Rate |
-|--------|------|------|
-| [Deribit Public API](https://docs.deribit.com/) | Options trades, book summaries, BTC index | 15s refresh |
+| Source | Data | Refresh |
+|--------|------|---------|
+| [Deribit](https://docs.deribit.com/) | Trades, book summaries, index price, IV | 15s |
 | [mempool.space](https://mempool.space/) | On-chain transactions (bot only) | Configurable |
+
+---
+
+## Telegram Bot (Optional)
+
+Python bot for real-time alerts: large options trades, on-chain whale movements, P/C shifts.
+
+```bash
+# Configure bot.py with your bot token and chat ID
+python bot.py
+```
+
+See [BTC_Flow_System_Setup_Guide.md](BTC_Flow_System_Setup_Guide.md) for details.
+
+---
 
 ## License
 
